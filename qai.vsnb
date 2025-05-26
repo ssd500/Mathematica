@@ -2,7 +2,7 @@
  "cells": [
   {
    "kind": 2,
-   "value": "MatrixForm[a={{1},{0}}];\nMatrixForm[b={{0},{1}}];\nMatrixForm[S={{1,0,0,0},{0,0,1,0},{0,1,0,0},{0,0,0,1}}];\n(* Q = Normal[SparseArray[Band[{1,1},{d,d}]->1,{2^n,2^n}]]; *)\n\nkpl[l_]:=(KroneckerProduct @@ l)\nent[l_]:=(supp[den[Total[kpl /@ l]]])\nmix[l_]:=(supp[Total[den/@kpl /@ l]])\nsupp[m_]:=(l=ConjugateTranspose[Orthogonalize[ConjugateTranspose[m]]];l.ConjugateTranspose[l])\nden[m_]:=m.ConjugateTranspose[m]\ntrace[m_,l_]:=(ResourceFunction[\"MatrixPartialTrace\"][m, l, 2])\ninter[l_]:=(j=Length[l[[1]]];r=supp[Total[(IdentityMatrix[j]-#)&/@l]];IdentityMatrix[j]-r)\napply[u_,m_]:=(u.m.ConjugateTranspose[u])\ndisplay[l_]:=(Print[MatrixForm[#]&/@Replace[l, _?(Not@*AssociationQ) :> {l}]])\nrank[m_]:=(Print[MatrixRank[m]])\nhermitian[m_]:=(Print[HermitianMatrixQ[m]])\npsd[m_]:=(Print[PositiveSemidefiniteMatrixQ[m]])\nexpand[a_]:=(x=Keys[a];y=Values[a];z=Join[x,Complement[B,x]];d=Length[z]-Length[x];y=KroneckerProduct[y,IdentityMatrix[2^d]];z=z//.{g1___,g2_,g3_,g4___}/;g2>g3:>(p=Length[{g1}];q=Length[{g4}];w=KroneckerProduct[IdentityMatrix[2^p],S,IdentityMatrix[2^q]];y=apply[w,y];{g1,g3,g2,g4});<|x->y|>)\nclosure[Q_]:=(B=Range[n];A=Subsets[B,{k}];P=supp[trace[Q,Complement[B,#]]]&/@A;AP=AssociationThread[A,P];display[AP];AP=AssociationMap[expand,AP];inter[Values[AP]])\n\nn=5;\nk=2;\nc1=mix[{{a, b, b, a, b}, {b, b, a, b, a}, {a, a, b, a, a}, {a, b, a, a, a}, {b, a, a, a, a}}];\nc2=ent[{{b, b, b, b, a}, {b, b, b, a, b}, {b, b, a, b, b}, {b, a, b, b, b}, {a, b, b, b, b}}];\nc=supp[c1];\nPrint[\"c\"]\nrank[c]\nf=IdentityMatrix[2^n];\nf[[{1,2}]]=f[[{2,1}]];\ng=ConjugateTranspose[f];\nPrint[\"f\"]\nPrint[f.g == g.f]\nfc=apply[f, c];\nPrint[\"fc\"]\nAfc=closure[fc];\nPrint[\"Afc\"]\nrank[Afc]\nAc=closure[c];\nPrint[\"Ac\"]\nrank[Ac]\nPrint[\"fAc\"]\nfAc=apply[f, Ac];\nAfAc=closure[fAc];\nPrint[\"AfAc\"]\nrank[AfAc]\ndiff=AfAc-Afc;\nPrint[\"Local Completeness\"]\nPrint[AfAc == Afc]\nPrint[\"Degree of Incompleteness\"]\npsd[diff]\nrank[diff]\ngAfc=apply[g, Afc];\nu=inter[{Ac,gAfc}];\nPrint[\"Actual u\"]\npsd[u]\nrank[u]\nd0=Ac-u;\nPrint[\"Candidate below Ac\"]\npsd[d0]\nrank[d0]\nfu=apply[f, u];\nd00=Afc-fu;\nPrint[\"fCandidate below Afc\"]\npsd[d00]\nrank[d00]",
+   "value": "MatrixForm[a={{1},{0}}];\nMatrixForm[b={{0},{1}}];\nMatrixForm[S={{1,0,0,0},{0,0,1,0},{0,1,0,0},{0,0,0,1}}];\n(* Q = Normal[SparseArray[Band[{1,1},{d,d}]->1,{2^n,2^n}]]; *)\n\nkpl[l_]:=(KroneckerProduct @@ l)\nent[l_]:=(supp[den[Total[kpl /@ l]]])\nmix[l_]:=(supp[Total[den/@kpl /@ l]])\nsupp[m_]:=(l=ConjugateTranspose[Orthogonalize[ConjugateTranspose[m]]];l.ConjugateTranspose[l])\nden[m_]:=m.ConjugateTranspose[m]\ntrace[m_,l_]:=(ResourceFunction[\"MatrixPartialTrace\"][m, l, 2])\ninter[l_]:=(j=Length[l[[1]]];r=supp[Total[(IdentityMatrix[j]-#)&/@l]];IdentityMatrix[j]-r)\napply[u_,m_]:=(u.m.ConjugateTranspose[u])\ndisplay[l_]:=(Print[MatrixForm[#]&/@Replace[l, _?(Not@*AssociationQ) :> {l}]])\nrank[m_]:=(Print[MatrixRank[m]])\nhermitian[m_]:=(Print[HermitianMatrixQ[m]])\npsd[m_]:=(Print[PositiveSemidefiniteMatrixQ[m]])\nexpand[a_]:=(x=Keys[a];y=Values[a];z=Join[x,Complement[B,x]];d=Length[z]-Length[x];y=KroneckerProduct[y,IdentityMatrix[2^d]];z=z//.{g1___,g2_,g3_,g4___}/;g2>g3:>(p=Length[{g1}];q=Length[{g4}];w=KroneckerProduct[IdentityMatrix[2^p],S,IdentityMatrix[2^q]];y=apply[w,y];{g1,g3,g2,g4});<|x->y|>)\nclosure[Q_]:=(B=Range[n];A=Subsets[B,{k}];P=supp[trace[Q,Complement[B,#]]]&/@A;AP=AssociationThread[A,P];display[AP];AP=AssociationMap[expand,AP];inter[Values[AP]])\n\nn=3;\nk=2;\nc1=mix[{{a, a, b}, {a, b, a}, {b, a, a}}];\nc2=ent[{{b, b, b, b, a}, {b, b, b, a, b}, {b, b, a, b, b}, {a, b, b, b, b}, {b, b, b, b, b}, {a, a, a, a, a}, {a, a, a, b, a}, {a, b, a, a, a}, {b, a, a, a, a}, {b, b, a, a, a}, {b, a, b, a, a}, {b, a, a, b, a}, {a, b, a, a, b}, {a, a, b, a, b}, {a, a, a, b, b}, {a, b, b, a, a}, {a, b, a, b, a}, {a, a, b, b, a}, {a, a, b, b, b}, {a, b, a, b, b}, {a, b, b, a, b}, {a, b, b, b, a}, {b, a, b, b, a}, {a, a, b, a, b}, {b, b, b, a, a}, {b, a, a, b, b}, {b, a, b, a, b}, {b, b, a, a, b}}];\nc=supp[c1];\nPrint[\"c\"]\nrank[c]\nf=IdentityMatrix[2^n];\nf[[{1,2}]]=f[[{2,1}]];\ng=ConjugateTranspose[f];\nPrint[\"f\"]\nPrint[f.g == g.f]\nfc=apply[f, c];\nPrint[\"fc\"]\nAfc=closure[fc];\nPrint[\"Afc\"]\nrank[Afc]\nAc=closure[c];\nPrint[\"Ac\"]\nrank[Ac]\nPrint[\"fAc\"]\nfAc=apply[f, Ac];\nAfAc=closure[fAc];\nPrint[\"AfAc\"]\nrank[AfAc]\ndiff=AfAc-Afc;\nPrint[\"Local Completeness\"]\nPrint[AfAc == Afc]\nPrint[\"Degree of Incompleteness\"]\npsd[diff]\nrank[diff]\ngAfc=apply[g, Afc];\nu=inter[{Ac,gAfc}];\nPrint[\"Actual u\"]\npsd[u]\nrank[u]\nd0=Ac-u;\nPrint[\"Candidate below Ac\"]\npsd[d0]\nrank[d0]\nfu=apply[f, u];\nd00=Afc-fu;\nPrint[\"fCandidate below Afc\"]\npsd[d00]\nrank[d00]",
    "languageId": "wolfram",
    "outputs": [
     {
@@ -12,169 +12,7 @@
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "3828adf7-f8f9-4afc-bd95-c507059ee676"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>5\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "2d6fe6a0-ac81-4867-b30c-eb2ecf14c0c2"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>f\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "ffdc827b-d4af-4bd3-b5df-4a2c315fbd4f"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>True\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "d12babbc-c550-46f0-987f-67b79ce4b9b5"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>fc\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "dd648bbc-68d8-4e80-86f9-cc916e251ac8"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre><|{1, 2} -> 1   0   0   0, {1, 3} -> 1   0   0   0, {1, 4} -> 1   0   0   0, \n\n            0   1   0   0            0   1   0   0            0   0   0   0\n\n            0   0   1   0            0   0   1   0            0   0   1   0\n\n            0   0   0   1            0   0   0   0            0   0   0   1\n \n>   {1, 5} -> 1   0   0   0, {2, 3} -> 1   0   0   0, \n\n              0   1   0   0            0   1   0   0\n\n              0   0   1   0            0   0   1   0\n\n              0   0   0   0            0   0   0   1\n \n>   {2, 4} -> 1   0   0   0, {2, 5} -> 1   0   0   0, \n\n              0   0   0   0            0   0   0   0\n\n              0   0   1   0            0   0   1   0\n\n              0   0   0   1            0   0   0   1\n \n>   {3, 4} -> 1   0   0   0, {3, 5} -> 1   0   0   0, \n\n              0   1   0   0            0   0   0   0\n\n              0   0   1   0            0   0   1   0\n\n              0   0   0   0            0   0   0   1\n \n>   {4, 5} -> 1   0   0   0|>\n\n              0   1   0   0\n\n              0   0   1   0\n\n              0   0   0   0\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "a8dc8d4e-24f3-4f65-8d19-ac9ed3b018ca"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>Afc\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "55fa8ed3-4842-4048-a2e2-c07f718e908f"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>8\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "1ac7fdaa-72ec-43db-a88e-86e2f5f5de3e"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre><|{1, 2} -> 1   0   0   0, {1, 3} -> 1   0   0   0, {1, 4} -> 1   0   0   0, \n\n            0   1   0   0            0   1   0   0            0   0   0   0\n\n            0   0   1   0            0   0   1   0            0   0   1   0\n\n            0   0   0   1            0   0   0   0            0   0   0   1\n \n>   {1, 5} -> 1   0   0   0, {2, 3} -> 1   0   0   0, \n\n              0   1   0   0            0   1   0   0\n\n              0   0   1   0            0   0   1   0\n\n              0   0   0   0            0   0   0   1\n \n>   {2, 4} -> 1   0   0   0, {2, 5} -> 1   0   0   0, \n\n              0   0   0   0            0   0   0   0\n\n              0   0   1   0            0   0   1   0\n\n              0   0   0   1            0   0   0   1\n \n>   {3, 4} -> 1   0   0   0, {3, 5} -> 1   0   0   0, \n\n              0   1   0   0            0   0   0   0\n\n              0   0   1   0            0   0   1   0\n\n              0   0   0   0            0   0   0   1\n \n>   {4, 5} -> 1   0   0   0|>\n\n              0   1   0   0\n\n              0   0   1   0\n\n              0   0   0   0\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "2a22794e-a29a-4927-bace-5d0c49fa349f"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>Ac\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "c4956e6f-5e98-4100-9be5-baf522f2623e"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>8\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "044de41d-5204-4cee-8ab2-3a5ae52ce655"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>fAc\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "cb5a08d8-1ace-42d8-9e64-586a550ff6bc"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre><|{1, 2} -> 1   0   0   0, {1, 3} -> 1   0   0   0, {1, 4} -> 1   0   0   0, \n\n            0   1   0   0            0   1   0   0            0   0   0   0\n\n            0   0   1   0            0   0   1   0            0   0   1   0\n\n            0   0   0   1            0   0   0   0            0   0   0   1\n \n>   {1, 5} -> 1   0   0   0, {2, 3} -> 1   0   0   0, \n\n              0   1   0   0            0   1   0   0\n\n              0   0   1   0            0   0   1   0\n\n              0   0   0   0            0   0   0   1\n \n>   {2, 4} -> 1   0   0   0, {2, 5} -> 1   0   0   0, \n\n              0   0   0   0            0   1   0   0\n\n              0   0   1   0            0   0   1   0\n\n              0   0   0   1            0   0   0   1\n \n>   {3, 4} -> 1   0   0   0, {3, 5} -> 1   0   0   0, \n\n              0   1   0   0            0   1   0   0\n\n              0   0   1   0            0   0   1   0\n\n              0   0   0   0            0   0   0   1\n \n>   {4, 5} -> 1   0   0   0|>\n\n              0   1   0   0\n\n              0   0   1   0\n\n              0   0   0   0\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "9e6a47a0-5e89-4f09-a400-4d5e79d6aa88"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>AfAc\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "c9269cf2-b552-48c7-b294-f1702ca39213"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>11\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "5b6d96b1-a51e-4f7e-ad53-19b2b329f6b4"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>Local Completeness\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "ce3d135b-51e8-4c1a-9830-a84ea90ebe8f"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>False\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "e8afb2a6-2239-4dcb-b590-ca4b311e0e82"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>Degree of Incompleteness\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "4cd69da4-2316-4dab-81d9-e9edf7eff9ab"
-    },
-    {
-     "items": [
-      {
-       "data": "<pre>True\n</pre>",
-       "mime": "x-application/wolfram-language-html"
-      }
-     ],
-     "id": "1cfbc52e-96a1-4000-8868-c757753b55c0"
+     "id": "ea5a1e25-2878-422b-842b-6a7a462ec0d7"
     },
     {
      "items": [
@@ -183,7 +21,169 @@
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "a3022cf9-a10d-4d50-a72c-50ce28057caa"
+     "id": "c2f375d1-d70a-4944-95cd-8a3a366f759f"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "7035ea0d-5baa-48bf-9e47-8fe659850cc0"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>True\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "f7d9056c-0790-433a-b320-49ca5113a393"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>fc\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "41b35eef-f9ba-41d3-9f1e-654308ac8aa7"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre><|{1, 2} -> 1   0   0   0, {1, 3} -> 1   0   0   0, {2, 3} -> 1   0   0   0|>\n\n            0   1   0   0            0   0   0   0            0   0   0   0\n\n            0   0   1   0            0   0   1   0            0   0   1   0\n\n            0   0   0   0            0   0   0   0            0   0   0   0\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "2e87470a-9163-4991-ae8b-22aa54eeb409"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Afc\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "804ca07a-42a4-4b16-aaec-93cfeede08e5"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>3\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "f7eeffe3-eef1-4b87-bdaf-931ba99e7a00"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre><|{1, 2} -> 1   0   0   0, {1, 3} -> 1   0   0   0, {2, 3} -> 1   0   0   0|>\n\n            0   1   0   0            0   1   0   0            0   1   0   0\n\n            0   0   1   0            0   0   1   0            0   0   1   0\n\n            0   0   0   0            0   0   0   0            0   0   0   0\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "49a29b4b-f168-464b-a53e-d63d0c1dfd9e"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Ac\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "11ebe1e7-79c7-49c9-b2ed-5693ac4bee55"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>4\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "5121153c-2958-41e4-982c-c8b7005fcfae"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>fAc\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "0b1047d9-54af-4c1c-8a43-fdc1f4fa50ae"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre><|{1, 2} -> 1   0   0   0, {1, 3} -> 1   0   0   0, {2, 3} -> 1   0   0   0|>\n\n            0   1   0   0            0   1   0   0            0   1   0   0\n\n            0   0   1   0            0   0   1   0            0   0   1   0\n\n            0   0   0   0            0   0   0   0            0   0   0   0\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "eae63664-ef4d-4fee-a388-90f919d2aadd"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>AfAc\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "9c0a2214-8130-4fd9-8bcd-132fc75fe6c2"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>4\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "99e78cf6-d0a0-4ed4-aa5a-b5b53f331b3e"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Local Completeness\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "df3328ef-a538-4f4f-b34b-8842376e56ea"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>False\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "59644a27-869c-44aa-a5a2-8e6268e3a650"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Degree of Incompleteness\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "3239f450-ccbb-4ceb-a6bf-cc91435738ff"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>True\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "4c47c1ad-3429-4614-b988-a3fc33611e4c"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>1\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "b19d601c-4fbf-4922-89b8-23006de8defd"
     },
     {
      "items": [
@@ -192,7 +192,7 @@
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "efb6e99b-325e-4d42-9514-e43b0580766c"
+     "id": "8a1ff4f3-0b71-4539-a88d-791910a87b05"
     },
     {
      "items": [
@@ -201,16 +201,16 @@
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "07ca0d45-8a5c-4a97-aeee-ceb87074d4d0"
+     "id": "1ec4b296-e0b2-44b2-997b-c757137a92df"
     },
     {
      "items": [
       {
-       "data": "<pre>7\n</pre>",
+       "data": "<pre>3\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "f40b2ea1-6ae6-4e99-87bf-7abc8c547f61"
+     "id": "8041d109-9816-46c2-8508-69f151330c63"
     },
     {
      "items": [
@@ -219,7 +219,7 @@
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "719bcfa9-16c7-4cb3-aabb-2ebaa8211600"
+     "id": "150790fa-9408-43a7-b980-51d5f548195e"
     },
     {
      "items": [
@@ -228,7 +228,7 @@
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "0890a35e-450e-4238-aa07-e9e008f0b2df"
+     "id": "50ba42a8-483f-4d9a-9f17-a3d9403ca065"
     },
     {
      "items": [
@@ -237,7 +237,7 @@
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "df4b0b88-be95-4742-989c-95fafca04088"
+     "id": "2394fb5d-e341-444a-997d-286b3bbb4a71"
     },
     {
      "items": [
@@ -246,7 +246,7 @@
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "ebb28785-ae33-4790-a325-09391a99ba30"
+     "id": "f1e692ab-1a3e-49cb-8eb7-9819dcfd8109"
     },
     {
      "items": [
@@ -255,25 +255,25 @@
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "a1dbddb7-b998-4f4b-af4f-bd66e35b0a21"
+     "id": "637ea3cf-c6a5-4b16-a150-fea84479fc9f"
     },
     {
      "items": [
       {
-       "data": "<pre>1\n</pre>",
+       "data": "<pre>0\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "83debfe5-1dbf-4d1c-a0cd-9f470c96b067"
+     "id": "e811b750-5cff-4657-9c3a-5186b5760269"
     }
    ],
    "metadata": {},
    "executionSummary": {
     "timing": {
-     "startTime": 1747542390887,
-     "endTime": 1747542391285
+     "startTime": 1748238517678,
+     "endTime": 1748238518042
     },
-    "executionOrder": 3896,
+    "executionOrder": 4778,
     "success": true
    }
   }
