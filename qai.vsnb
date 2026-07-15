@@ -2,9 +2,1117 @@
  "cells": [
   {
    "kind": 2,
-   "value": "$MaxPrecision = \\[Infinity]\n$MaxExtraPrecision = \\[Infinity]\nMatrixForm[a = {{1}, {0}}]; (* Corresponds to ket 0 *)\nMatrixForm[b = {{0}, {1}}]; (* Corresponds to ket 1 *)\nMatrixForm[SWAP = {{1, 0, 0, 0}, {0, 0, 1, 0}, {0, 1, 0, 0}, {0, 0, 0, 1}}]; (* Swap gate needed for expanding in the correct order *)\nn = 8; (* Number of qubits in the concrete domain *)\nk = 2; (* Number of qubits in every tuple of the abstract domain *)\nNM = {Range[n]}; (* Concrete Domain *)\nS = Subsets[Range[n], {k}]; (* Abstract Domain *)\n\nH = {{1/Sqrt[2], 1/Sqrt[2]}, {1/Sqrt[2], -1/Sqrt[2]}};\nZ = {{1, 0}, {0, -1}};\nT = {{1, 0}, {0, 1/Sqrt[2] + 1/Sqrt[2]I}};\nTD = {{1, 0}, {0, 1/Sqrt[2] - 1/Sqrt[2]I}};\nSP = {{1, 0}, {0, I}};\nCX = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 0, 1}, {0, 0, 1, 0}};\nCZ = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, -1}};\n\n(* These are used to initialize unit vectors. For instance, |010> would be represented by {a, b, a}.\nThe first function, kpl, returns a list of unit vectors given their representation.\nThe second function, den, is used to convert a unit vector to a density matrix.\nThe third function, ent, is used to create an entangled state represented as a projection. An example usage would be ent[{{a, a, a}, {b, b, b}}] which would create the maximally entangled state.\nThe fourth function, mix, is used to create a mixed state represented as a projection. An example usage would be mix[{{a, a, a}, {b, b, b}}] which would create a convex combination of |000> and |111>. *)\nkpl[listBasic_] := (KroneckerProduct @@ listBasic)\nden[vec_] := (vec.ConjugateTranspose[vec])\nent[listEnt_] := (supp[den[Total[kpl /@ listEnt]]])\nmix[listMix_] := (supp[Total[den /@ kpl /@ listMix]])\n \n(* This mirrors the exact Java code artifact for QAI. *)\nsupp[mat_] := (\n    basis = ConjugateTranspose[Orthogonalize[ConjugateTranspose[mat]]];\n    Simplify[basis.ConjugateTranspose[basis]])\n\nintersectionTuple[listMeet_] := (\n    len = Length[listMeet[[1]]];\n    join = supp[Total[(IdentityMatrix[len] - #)& /@ listMeet]];\n    IdentityMatrix[len] - join)\n\nintersection[state1_, state2_, dom_] := (# -> intersectionTuple[{#/.state1, #/.state2}]& /@ dom)\n \ntrace[matrix_, original_, discard_] := (ResourceFunction[\"MatrixPartialTrace\"][matrix, First[FirstPosition[original, #]]& /@ discard, 2])\nalphaTuple[concState_, absKey_] := (absKey -> intersectionTuple[supp[trace[#[[2]], #[[1]], Complement[#[[1]], absKey]]]& /@ Select[concState, SubsetQ[#[[1]], absKey]&]])\nalpha[Q_, abs_] := (\n    If[\n        MemberQ[alphaCache, Q] && !ContainsExactly[Keys[Q], abs],\n        gammaCache[[FirstPosition[alphaCache, Q][[1]]]],\n        alphaTuple[Q, #]& /@ abs\n    ])\n \nexpand[key_, val_, expKey_] := (\n    z = Join[key, Complement[expKey, key]];\n    d = Length[z] - Length[key];\n    x = KroneckerProduct[val, IdentityMatrix[2^d]];\n    y = x;\n    z = z//.{g1___, g2_, g3_, g4___}/; g2 > g3 :> (\n        p = Length[{g1}];\n        q = Length[{g4}];\n        w = KroneckerProduct[IdentityMatrix[2^p], SWAP, IdentityMatrix[2^q]];\n        y = apply[w,y];\n        {g1,g3,g2,g4}\n    );\n    y)\n\ngammaTuple[absState_, concKey_] := (concKey -> intersectionTuple[expand[#[[1]], #[[2]], concKey]& /@ Select[absState, SubsetQ[concKey, #[[1]]]&]])\ngammaQAI[Pr_, conc_] := (gammaTuple[Pr, #]& /@ conc)\ngamma[P_, indx_] := (\n    If[\n        StringQ[P],\n\n        idx = ToExpression[StringTake[P, -StringLength[P] + 1]];\n        transfer[alphaCache[[idx]], indx],\n        \n        gammaTuple[P, #]& /@ funcR[[indx]]\n    ])\n\nunion[fEx_, absKeys_] := (DeleteDuplicates[Union[#, fEx]& /@ absKeys])\n \napply[u_, m_] := (Simplify[u.m.ConjugateTranspose[u]])\nopTuple[midTuple_, f_] := (midTuple[[1]] -> apply[expand[f[[1]], f[[2]], midTuple[[1]]], midTuple[[2]]])\n\nopQAI[abState_, fn_] := (\n    If[\n        StringQ[P],\n        kP = S,\n        kP = Keys[abState]\n    ];\n    R = DeleteDuplicates[Union[#, fn[[1]]]& /@ kP];\n    mid = gammaQAI[abState, R];\n    app = opTuple[#, fn]& /@ mid;\n    alpha[app, kP])\n\nopQAIR[abSt_, ind_] := (\n    intSt = gamma[abSt, ind];\n    resSt = opTuple[#, func[[ind]]]& /@ intSt;\n    (* One can easily change this for more flexibility. *)\n    alpha[resSt, S])\n\nop[midState_, fnc_] := (opTuple[#, fnc]& /@ midState)\n \ndisplayTuple[tuple_] := (Magnify[tuple[[1]] -> MatrixForm[tuple[[2]]], 2])\ndisplay[listTuple_] := (\n    If[\n        StringQ[listTuple],\n        Print[listTuple],\n        Print[displayTuple /@ listTuple]\n    ])\n\ntransfer[intState_, index_] := (\n    tint = union[func[[index]][[1]], Keys[intState]];\n    tdom = funcR[[index]];\n    alpha[gammaQAI[intState, tint], tdom])\n \nequals[st1_, st2_, domain_] :=(\n    If[\n        StringQ[st1],\n        st1 == st2,\n        (#/.st1)==(#/.st2)& /@ domain\n    ])\n\n(* Helper functions for better analysis.\nThe first function, rank, finds the dimension of a projection.\nThe second function, psd, allows us to compare elements. For example, say we want to see if P <= Q. By the Lowner order, this is true iff Q - P is positive-semidefinite. If psd[Q - P] prints true, we have our verification. Otherwise, we can always test psd[P - Q] and if true, we know Q <= P. If both calls are false, they are uncomparable. *)\nrank[st_] := (If[StringQ[st], Print[\"Dummy point has no rank!\"], Print[MatrixRank[#[[2]]]& /@ st]])\npsd[state_] := (PositiveSemidefiniteMatrixQ[#[[2]]]& /@ state)\n \n(* Now begins the actual code execution of the Local Completeness refinement computations. The following code applies to Grover but one can easily play around by changing the number and definitions of functions (f1, f2, etc.) being composed. Note that g1 is the inverse of f1, etc. *)\nfunc = {\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {5} -> H,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {5} -> T,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {1, 2} -> CX,\n    {2} -> TD,\n    {1, 2} -> CX,\n    {1} -> TD,\n    {2} -> TD,\n    {5} -> T,\n    {5} -> H,\n    {6} -> H,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {6} -> T,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {3, 4} -> CX,\n    {4} -> TD,\n    {3, 4} -> CX,\n    {3} -> TD,\n    {4} -> TD,\n    {6} -> T,\n    {6} -> H,\n    {7} -> H,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {7} -> T,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {5, 6} -> CX,\n    {6} -> TD,\n    {5, 6} -> CX,\n    {5} -> TD,\n    {6} -> TD,\n    {7} -> T,\n    {7} -> H,\n    {7, 8} -> CZ,\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {5} -> H,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {5} -> T,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {1, 2} -> CX,\n    {2} -> TD,\n    {1, 2} -> CX,\n    {1} -> TD,\n    {2} -> TD,\n    {5} -> T,\n    {5} -> H,\n    {6} -> H,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {6} -> T,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {3, 4} -> CX,\n    {4} -> TD,\n    {3, 4} -> CX,\n    {3} -> TD,\n    {4} -> TD,\n    {6} -> T,\n    {6} -> H,\n    {7} -> H,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {7} -> T,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {5, 6} -> CX,\n    {6} -> TD,\n    {5, 6} -> CX,\n    {5} -> TD,\n    {6} -> TD,\n    {7} -> T,\n    {7} -> H,\n    {7, 8} -> CZ,\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {1} -> Z\n};\n\nfuncR = union[#[[1]], S]& /@ func;\nLength[func]\n \n(* Starting state *)\ninit = Thread[NM -> {ent[{{a, a, a, a, a, a, a, a}}]}]; (* span{ |00000000> } *)\nc = init;\n(*display[init];\nrank[init];*)\n\nPrint[\"\\n\"]\nPrint[\"Forward Repair Strategy\"]\n\nalphaCache = {};\ngammaCache = {};\nfSP = alpha[alpha[init, funcR[[1]]], S];\n\nDo[\n    f=func[[i]];\n    tfSP = fSP;\n    intDom = funcR[[i]];\n    c=op[c, f];\n    fSP = alpha[alpha[c, intDom], S];\n    Print[StringForm[\"f`` strongest postcondition\", i]];\n    (*display[fSP];\n    rank[fSP];*)\n    fAI = opQAIR[tfSP, i];\n    Print[StringForm[\"f`` computed by the abstract interpreter\", i]];\n    (*display[fAI];\n    rank[fAI];*)\n    Print[equals[fAI, fSP, S]];\n    If[\n        And @@ equals[fAI, fSP, S],\n        \n        Print[StringForm[\"f`` is complete and moving to the next one!\", i]];\n        AppendTo[alphaCache, \"\"];\n        AppendTo[gammaCache, \"\"],\n        \n        Print[StringForm[\"Repairing since f`` is incomplete!\", i]];\n        g = f;\n        g[[2]] = ConjugateTranspose[f[[2]]];\n        fMissing = op[gamma[fSP, i], g];\n        Print[StringForm[\"Max element in the intermediate whose f`` image is <= f``SP\", i, i]];\n        display[fMissing];\n        rank[fMissing];\n        fUpperBound = gamma[tfSP, i];\n        Print[\"Max allowable element in the intermediate\"];\n        display[fUpperBound];\n        rank[fUpperBound];\n        u=intersection[fMissing, fUpperBound, intDom];\n        Print[StringForm[\"Actual u for f`` is their intersection\", i]];\n        display[u];\n        rank[u];\n        u = transfer[u, Max[i - 1, 1]];\n        Print[\"After transfer ...\"];\n        display[u];\n        rank[u];\n        AppendTo[alphaCache, u];\n        AppendTo[gammaCache, ToString[StringForm[\"u``\", i]]]\n    ],\n    \n    {i, Length[func]}\n]\n\nPrint[alphaCache]\nPrint[gammaCache]\nPrint[\"Again\"]\nc = init;\n\nfSP = alpha[alpha[init, funcR[[1]]], S];\n\nDo[\n    f=func[[i]];\n    tfSP = fSP;\n    intDom = funcR[[i]];\n    c=op[c, f];\n    fSP = alpha[alpha[c, intDom], S];\n    Print[StringForm[\"f`` strongest postcondition\", i]];\n    display[fSP];\n    rank[fSP];\n    fAI = opQAIR[tfSP, i];\n    Print[StringForm[\"f`` computed by the abstract interpreter\", i]];\n    display[fAI];\n    rank[fAI];\n    Print[equals[fAI, fSP, S]];\n    If[\n        And @@ equals[fAI, fSP, S],\n        \n        Print[StringForm[\"f`` is complete and moving to the next one!\", i]];\n        AppendTo[alphaCache, \"\"];\n        AppendTo[gammaCache, \"\"],\n        \n        Print[StringForm[\"Repairing since f`` is incomplete!\", i]];\n        g = f;\n        g[[2]] = ConjugateTranspose[f[[2]]];\n        fMissing = op[gamma[fSP, i], g];\n        Print[StringForm[\"Max element in the intermediate whose f`` image is <= f``SP\", i, i]];\n        display[fMissing];\n        rank[fMissing];\n        fUpperBound = gamma[tfSP, i];\n        Print[\"Max allowable element in the intermediate\"];\n        display[fUpperBound];\n        rank[fUpperBound];\n        u=intersection[fMissing, fUpperBound, intDom];\n        Print[StringForm[\"Actual u for f`` is their intersection\", i]];\n        display[u];\n        rank[u];\n        u = transfer[u, Max[i - 1, 1]];\n        Print[\"After transfer ...\"];\n        display[u];\n        rank[u];\n        AppendTo[alphaCache, u];\n        AppendTo[gammaCache, ToString[StringForm[\"u``\", i]]]\n    ],\n    \n    {i, Length[func]}\n]\n\nPrint[\"==================================================================\"]\nPrint[\"\\n\"]\nPrint[\"Backward Repair Strategy\"]\n \nalphaCache = {};\ngammaCache = {};\nabsCache = {};\n\nspec = gamma[alpha[op[op[op[init, f1], f2], f3], S], -1];\nv = spec;\nPrint[\"\\n\"]\nPrint[StringForm[\"v`` corresponds to spec which here corresponds to the strongest postcondition for f(c)\", Length[func] + 1]]\ndisplay[v]\nrank[v]\n\nfAI = alpha[alpha[init, funcR[[1]]], S];\nAppendTo[absCache, fAI];\nDo[\n    fAI = opQAIR[fAI, i];\n    AppendTo[absCache, fAI],\n    \n    {i, Length[func] - 1}\n]\n\nDo[\n    j = Length[func] - i + 1;\n    f=func[[j]];\n    intDomain = funcR[[j]];\n    g = f;\n    g[[2]] = ConjugateTranspose[f[[2]]];\n    fWLP = op[v, g];\n    Print[StringForm[\"f`` weakest liberal precondition\", j]];\n    display[fWLP];\n    rank[fWLP];\n    fAI = gamma[absCache[[j]], j];\n    Print[StringForm[\"a`` corresponds to the abstract computation until start of f``\", j, j]];\n    display[fAI];\n    rank[fAI];\n    v = intersection[fAI, fWLP, intDomain];\n    Print[StringForm[\"v`` which needs to be added/already there for f`` is their intersection\", j, j]];\n    display[v];\n    rank[v];\n    v = transfer[v, Max[j - 1, 1]];\n    Print[\"After transfer ...\"];\n    display[v];\n    rank[v];\n    lhs = alpha[op[v, f], S];\n    Print[\"LHS of proof obligation\"];\n    display[lhs];\n    rank[lhs];\n    rhs = opQAIR[alpha[v, S], j];\n    Print[\"RHS of proof obligation\"];\n    display[rhs];\n    rank[rhs];\n    Print[equals[lhs, rhs, S]];\n    If[\n        And @@ equals[lhs, rhs, S],\n        \n        Print[\"Proof obligation satisfied, nothing to be modified!\"];\n        PrependTo[alphaCache, \"\"];\n        PrependTo[gammaCache, \"\"],\n        \n        Print[\"Proof obligation not satisfied, modifying!\"];\n        PrependTo[alphaCache, v];\n        PrependTo[gammaCache, ToString[StringForm[\"u``\", j]]]\n    ],\n\n    {i, Length[func]}\n]\n\nPrint[\"Again\"]\nabsCache = {};\nv = spec;\nPrint[\"\\n\"]\nPrint[StringForm[\"v`` corresponds to spec which here corresponds to the strongest postcondition for f(c)\", Length[func] + 1]]\ndisplay[v]\nrank[v]\n\nfAI = alpha[alpha[init, funcR[[1]]], S];\nAppendTo[absCache, fAI];\nDo[\n    fAI = opQAIR[fAI, i];\n    AppendTo[absCache, fAI],\n    \n    {i, Length[func] - 1}\n]\n\nDo[\n    j = Length[func] - i + 1;\n    f=func[[j]];\n    intDomain = funcR[[j]];\n    g = f;\n    g[[2]] = ConjugateTranspose[f[[2]]];\n    fWLP = op[v, g];\n    Print[StringForm[\"f`` weakest liberal precondition\", j]];\n    display[fWLP];\n    rank[fWLP];\n    fAI = gamma[absCache[[j]], j];\n    Print[StringForm[\"a`` corresponds to the abstract computation until start of f``\", j, j]];\n    display[fAI];\n    rank[fAI];\n    v = intersection[fAI, fWLP, intDomain];\n    Print[StringForm[\"v`` which needs to be added/already there for f`` is their intersection\", j, j]];\n    display[v];\n    rank[v];\n    v = transfer[v, Max[j - 1, 1]];\n    Print[\"After transfer ...\"];\n    display[v];\n    rank[v];\n    lhs = alpha[op[v, f], S];\n    Print[\"LHS of proof obligation\"];\n    display[lhs];\n    rank[lhs];\n    rhs = opQAIR[alpha[v, S], j];\n    Print[\"RHS of proof obligation\"];\n    display[rhs];\n    rank[rhs];\n    Print[equals[lhs, rhs, S]];\n    If[\n        And @@ equals[lhs, rhs, S],\n        \n        Print[\"Proof obligation satisfied, nothing to be modified!\"];\n        PrependTo[alphaCache, \"\"];\n        PrependTo[gammaCache, \"\"],\n        \n        Print[\"Proof obligation not satisfied, modifying!\"];\n        PrependTo[alphaCache, v];\n        PrependTo[gammaCache, ToString[StringForm[\"u``\", j]]]\n    ],\n\n    {i, Length[func]}\n]",
+   "value": "$MaxPrecision = \\[Infinity]\n$MaxExtraPrecision = \\[Infinity]\nMatrixForm[a = {{1}, {0}}]; (* Corresponds to ket 0 *)\nMatrixForm[b = {{0}, {1}}]; (* Corresponds to ket 1 *)\nMatrixForm[SWAP = {{1, 0, 0, 0}, {0, 0, 1, 0}, {0, 1, 0, 0}, {0, 0, 0, 1}}]; (* Swap gate needed for expanding in the correct order *)\nn = 8; (* Number of qubits in the concrete domain *)\nk = 2; (* Number of qubits in every tuple of the abstract domain *)\nNM = {Range[n]}; (* Concrete Domain *)\nS = Subsets[Range[n], {k}]; (* Abstract Domain *)\n\nH = {{1/Sqrt[2], 1/Sqrt[2]}, {1/Sqrt[2], -1/Sqrt[2]}};\nZ = {{1, 0}, {0, -1}};\nT = {{1, 0}, {0, 1/Sqrt[2] + 1/Sqrt[2]I}};\nTD = {{1, 0}, {0, 1/Sqrt[2] - 1/Sqrt[2]I}};\nSP = {{1, 0}, {0, I}};\nCX = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 0, 1}, {0, 0, 1, 0}};\nCZ = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, -1}};\n\n(* These are used to initialize unit vectors. For instance, |010> would be represented by {a, b, a}.\nThe first function, kpl, returns a list of unit vectors given their representation.\nThe second function, den, is used to convert a unit vector to a density matrix.\nThe third function, ent, is used to create an entangled state represented as a projection. An example usage would be ent[{{a, a, a}, {b, b, b}}] which would create the maximally entangled state.\nThe fourth function, mix, is used to create a mixed state represented as a projection. An example usage would be mix[{{a, a, a}, {b, b, b}}] which would create a convex combination of |000> and |111>. *)\nkpl[listBasic_] := (KroneckerProduct @@ listBasic)\nden[vec_] := (vec.ConjugateTranspose[vec])\nent[listEnt_] := (supp[den[Total[kpl /@ listEnt]]])\nmix[listMix_] := (supp[Total[den /@ kpl /@ listMix]])\n \n(* This mirrors the exact Java code artifact for QAI. *)\nsupp[mat_] := (\n    basis = ConjugateTranspose[Orthogonalize[ConjugateTranspose[mat]]];\n    Simplify[basis.ConjugateTranspose[basis]])\n\nintersectionTuple[listMeet_] := (\n    len = Length[listMeet[[1]]];\n    join = supp[Total[(IdentityMatrix[len] - #)& /@ listMeet]];\n    IdentityMatrix[len] - join)\n\nintersection[state1_, state2_, dom_] := (# -> intersectionTuple[{#/.state1, #/.state2}]& /@ dom)\n \ntrace[matrix_, original_, discard_] := (ResourceFunction[\"MatrixPartialTrace\"][matrix, First[FirstPosition[original, #]]& /@ discard, 2])\nalphaTuple[concState_, absKey_] := (absKey -> intersectionTuple[supp[trace[#[[2]], #[[1]], Complement[#[[1]], absKey]]]& /@ Select[concState, SubsetQ[#[[1]], absKey]&]])\nalpha[Q_, abs_] := (\n    Print[\"Enter alpha\"];\n    If[\n        MemberQ[alphaCache, Q] && !ContainsExactly[Keys[Q], abs],\n        gammaCache[[FirstPosition[alphaCache, Q][[1]]]],\n        (Print[\"Tuples for alpha\"]; alphaTuple[Q, #]& /@ abs)\n    ])\n \nexpand[key_, val_, expKey_] := (\n    z = Join[key, Complement[expKey, key]];\n    d = Length[z] - Length[key];\n    x = KroneckerProduct[val, IdentityMatrix[2^d]];\n    y = x;\n    z = z//.{g1___, g2_, g3_, g4___}/; g2 > g3 :> (\n        p = Length[{g1}];\n        q = Length[{g4}];\n        w = KroneckerProduct[IdentityMatrix[2^p], SWAP, IdentityMatrix[2^q]];\n        y = apply[w,y];\n        {g1,g3,g2,g4}\n    );\n    y)\n\ngammaTuple[absState_, concKey_] := (concKey -> intersectionTuple[expand[#[[1]], #[[2]], concKey]& /@ Select[absState, SubsetQ[concKey, #[[1]]]&]])\ngammaQAI[Pr_, conc_] := (gammaTuple[Pr, #]& /@ conc)\ngamma[P_, indx_] := (\n    If[\n        StringQ[P],\n\n        idx = ToExpression[StringTake[P, -StringLength[P] + 1]];\n        transfer[alphaCache[[idx]], indx],\n        \n        gammaTuple[P, #]& /@ funcR[[indx]]\n    ])\n\nunion[fEx_, absKeys_] := (DeleteDuplicates[Union[#, fEx]& /@ absKeys])\n \napply[u_, m_] := (Simplify[u.m.ConjugateTranspose[u]])\nopTuple[midTuple_, f_] := (midTuple[[1]] -> apply[expand[f[[1]], f[[2]], midTuple[[1]]], midTuple[[2]]])\n\nopQAI[abState_, fn_] := (\n    If[\n        StringQ[P],\n        kP = S,\n        kP = Keys[abState]\n    ];\n    R = DeleteDuplicates[Union[#, fn[[1]]]& /@ kP];\n    mid = gammaQAI[abState, R];\n    app = opTuple[#, fn]& /@ mid;\n    alpha[app, kP])\n\nopQAIR[abSt_, ind_] := (\n    intSt = gamma[abSt, ind];\n    resSt = opTuple[#, func[[ind]]]& /@ intSt;\n    (* One can easily change this for more flexibility. *)\n    alpha[resSt, S])\n\nop[midState_, fnc_] := (opTuple[#, fnc]& /@ midState)\n \ndisplayTuple[tuple_] := (Magnify[tuple[[1]] -> MatrixForm[tuple[[2]]], 2])\ndisplay[listTuple_] := (\n    If[\n        StringQ[listTuple],\n        Print[listTuple],\n        Print[displayTuple /@ listTuple]\n    ])\n\ntransfer[intState_, index_] := (\n    tint = union[func[[index]][[1]], Keys[intState]];\n    tdom = funcR[[index]];\n    alpha[gammaQAI[intState, tint], tdom])\n \nequals[st1_, st2_, domain_] :=(\n    If[\n        StringQ[st1],\n        st1 == st2,\n        (#/.st1)==(#/.st2)& /@ domain\n    ])\n\n(* Helper functions for better analysis.\nThe first function, rank, finds the dimension of a projection.\nThe second function, psd, allows us to compare elements. For example, say we want to see if P <= Q. By the Lowner order, this is true iff Q - P is positive-semidefinite. If psd[Q - P] prints true, we have our verification. Otherwise, we can always test psd[P - Q] and if true, we know Q <= P. If both calls are false, they are uncomparable. *)\nrank[st_] := (If[StringQ[st], Print[\"Dummy point has no rank!\"], Print[MatrixRank[#[[2]]]& /@ st]])\npsd[state_] := (PositiveSemidefiniteMatrixQ[#[[2]]]& /@ state)\n \n(* Now begins the actual code execution of the Local Completeness refinement computations. The following code applies to Grover but one can easily play around by changing the number and definitions of functions (f1, f2, etc.) being composed. Note that g1 is the inverse of f1, etc. *)\nfunc = {\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {5} -> H,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {5} -> T,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {1, 2} -> CX,\n    {2} -> TD,\n    {1, 2} -> CX,\n    {1} -> TD,\n    {2} -> TD,\n    {5} -> T,\n    {5} -> H,\n    {6} -> H,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {6} -> T,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {3, 4} -> CX,\n    {4} -> TD,\n    {3, 4} -> CX,\n    {3} -> TD,\n    {4} -> TD,\n    {6} -> T,\n    {6} -> H,\n    {7} -> H,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {7} -> T,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {5, 6} -> CX,\n    {6} -> TD,\n    {5, 6} -> CX,\n    {5} -> TD,\n    {6} -> TD,\n    {7} -> T,\n    {7} -> H,\n    {7, 8} -> CZ,\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {5} -> H,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {5} -> T,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {1, 2} -> CX,\n    {2} -> TD,\n    {1, 2} -> CX,\n    {1} -> TD,\n    {2} -> TD,\n    {5} -> T,\n    {5} -> H,\n    {6} -> H,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {6} -> T,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {3, 4} -> CX,\n    {4} -> TD,\n    {3, 4} -> CX,\n    {3} -> TD,\n    {4} -> TD,\n    {6} -> T,\n    {6} -> H,\n    {7} -> H,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {7} -> T,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {5, 6} -> CX,\n    {6} -> TD,\n    {5, 6} -> CX,\n    {5} -> TD,\n    {6} -> TD,\n    {7} -> T,\n    {7} -> H,\n    {7, 8} -> CZ,\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {1} -> Z\n};\n\nfuncR = union[#[[1]], S]& /@ func;\nLength[func]\n \n(* Starting state *)\ninit = Thread[NM -> {ent[{{a, a, a, a, a, a, a, a}}]}]; (* span{ |00000000> } *)\nc = init;\n(*display[init];\nrank[init];*)\n\nPrint[\"\\n\"]\nPrint[\"Forward Repair Strategy\"]\n\nalphaCache = {};\ngammaCache = {};\nfSP = alpha[alpha[init, funcR[[1]]], S];\n\nDo[\n    Print[StringForm[\"f``\", i]];\n    f=func[[i]];\n    Print[StringForm[\"Check f``\", i]];\n    tfSP = fSP;\n    Print[StringForm[\"tCheck f``\", i]];\n    intDom = funcR[[i]];\n    Print[StringForm[\"dCheck f``\", i]];\n    c=op[c, f];\n    Print[StringForm[\"opCheck f``\", i]];\n    fSP = alpha[alpha[c, intDom], S];\n    Print[StringForm[\"f`` strongest postcondition\", i]];\n    (*display[fSP];\n    rank[fSP];*)\n    fAI = opQAIR[tfSP, i];\n    Print[StringForm[\"f`` computed by the abstract interpreter\", i]];\n    (*display[fAI];\n    rank[fAI];*)\n    Print[equals[fAI, fSP, S]];\n    If[\n        And @@ equals[fAI, fSP, S],\n        \n        Print[StringForm[\"f`` is complete and moving to the next one!\", i]];\n        AppendTo[alphaCache, \"\"];\n        AppendTo[gammaCache, \"\"],\n        \n        Print[StringForm[\"Repairing since f`` is incomplete!\", i]];\n        g = f;\n        g[[2]] = ConjugateTranspose[f[[2]]];\n        fMissing = op[gamma[fSP, i], g];\n        Print[StringForm[\"Max element in the intermediate whose f`` image is <= f``SP\", i, i]];\n        display[fMissing];\n        rank[fMissing];\n        fUpperBound = gamma[tfSP, i];\n        Print[\"Max allowable element in the intermediate\"];\n        display[fUpperBound];\n        rank[fUpperBound];\n        u=intersection[fMissing, fUpperBound, intDom];\n        Print[StringForm[\"Actual u for f`` is their intersection\", i]];\n        display[u];\n        rank[u];\n        u = transfer[u, Max[i - 1, 1]];\n        Print[\"After transfer ...\"];\n        display[u];\n        rank[u];\n        AppendTo[alphaCache, u];\n        AppendTo[gammaCache, ToString[StringForm[\"u``\", i]]]\n    ],\n    \n    {i, Length[func]}\n]\n\nPrint[alphaCache]\nPrint[gammaCache]\nPrint[\"Again\"]\nc = init;\n\nfSP = alpha[alpha[init, funcR[[1]]], S];\n\nDo[\n    f=func[[i]];\n    tfSP = fSP;\n    intDom = funcR[[i]];\n    c=op[c, f];\n    fSP = alpha[alpha[c, intDom], S];\n    Print[StringForm[\"f`` strongest postcondition\", i]];\n    display[fSP];\n    rank[fSP];\n    fAI = opQAIR[tfSP, i];\n    Print[StringForm[\"f`` computed by the abstract interpreter\", i]];\n    display[fAI];\n    rank[fAI];\n    Print[equals[fAI, fSP, S]];\n    If[\n        And @@ equals[fAI, fSP, S],\n        \n        Print[StringForm[\"f`` is complete and moving to the next one!\", i]];\n        AppendTo[alphaCache, \"\"];\n        AppendTo[gammaCache, \"\"],\n        \n        Print[StringForm[\"Repairing since f`` is incomplete!\", i]];\n        g = f;\n        g[[2]] = ConjugateTranspose[f[[2]]];\n        fMissing = op[gamma[fSP, i], g];\n        Print[StringForm[\"Max element in the intermediate whose f`` image is <= f``SP\", i, i]];\n        display[fMissing];\n        rank[fMissing];\n        fUpperBound = gamma[tfSP, i];\n        Print[\"Max allowable element in the intermediate\"];\n        display[fUpperBound];\n        rank[fUpperBound];\n        u=intersection[fMissing, fUpperBound, intDom];\n        Print[StringForm[\"Actual u for f`` is their intersection\", i]];\n        display[u];\n        rank[u];\n        u = transfer[u, Max[i - 1, 1]];\n        Print[\"After transfer ...\"];\n        display[u];\n        rank[u];\n        AppendTo[alphaCache, u];\n        AppendTo[gammaCache, ToString[StringForm[\"u``\", i]]]\n    ],\n    \n    {i, Length[func]}\n]\n\nPrint[\"==================================================================\"]\nPrint[\"\\n\"]\nPrint[\"Backward Repair Strategy\"]\n \nalphaCache = {};\ngammaCache = {};\nabsCache = {};\n\nspec = gamma[alpha[op[op[op[init, f1], f2], f3], S], -1];\nv = spec;\nPrint[\"\\n\"]\nPrint[StringForm[\"v`` corresponds to spec which here corresponds to the strongest postcondition for f(c)\", Length[func] + 1]]\ndisplay[v]\nrank[v]\n\nfAI = alpha[alpha[init, funcR[[1]]], S];\nAppendTo[absCache, fAI];\nDo[\n    fAI = opQAIR[fAI, i];\n    AppendTo[absCache, fAI],\n    \n    {i, Length[func] - 1}\n]\n\nDo[\n    j = Length[func] - i + 1;\n    f=func[[j]];\n    intDomain = funcR[[j]];\n    g = f;\n    g[[2]] = ConjugateTranspose[f[[2]]];\n    fWLP = op[v, g];\n    Print[StringForm[\"f`` weakest liberal precondition\", j]];\n    display[fWLP];\n    rank[fWLP];\n    fAI = gamma[absCache[[j]], j];\n    Print[StringForm[\"a`` corresponds to the abstract computation until start of f``\", j, j]];\n    display[fAI];\n    rank[fAI];\n    v = intersection[fAI, fWLP, intDomain];\n    Print[StringForm[\"v`` which needs to be added/already there for f`` is their intersection\", j, j]];\n    display[v];\n    rank[v];\n    v = transfer[v, Max[j - 1, 1]];\n    Print[\"After transfer ...\"];\n    display[v];\n    rank[v];\n    lhs = alpha[op[v, f], S];\n    Print[\"LHS of proof obligation\"];\n    display[lhs];\n    rank[lhs];\n    rhs = opQAIR[alpha[v, S], j];\n    Print[\"RHS of proof obligation\"];\n    display[rhs];\n    rank[rhs];\n    Print[equals[lhs, rhs, S]];\n    If[\n        And @@ equals[lhs, rhs, S],\n        \n        Print[\"Proof obligation satisfied, nothing to be modified!\"];\n        PrependTo[alphaCache, \"\"];\n        PrependTo[gammaCache, \"\"],\n        \n        Print[\"Proof obligation not satisfied, modifying!\"];\n        PrependTo[alphaCache, v];\n        PrependTo[gammaCache, ToString[StringForm[\"u``\", j]]]\n    ],\n\n    {i, Length[func]}\n]\n\nPrint[\"Again\"]\nabsCache = {};\nv = spec;\nPrint[\"\\n\"]\nPrint[StringForm[\"v`` corresponds to spec which here corresponds to the strongest postcondition for f(c)\", Length[func] + 1]]\ndisplay[v]\nrank[v]\n\nfAI = alpha[alpha[init, funcR[[1]]], S];\nAppendTo[absCache, fAI];\nDo[\n    fAI = opQAIR[fAI, i];\n    AppendTo[absCache, fAI],\n    \n    {i, Length[func] - 1}\n]\n\nDo[\n    j = Length[func] - i + 1;\n    f=func[[j]];\n    intDomain = funcR[[j]];\n    g = f;\n    g[[2]] = ConjugateTranspose[f[[2]]];\n    fWLP = op[v, g];\n    Print[StringForm[\"f`` weakest liberal precondition\", j]];\n    display[fWLP];\n    rank[fWLP];\n    fAI = gamma[absCache[[j]], j];\n    Print[StringForm[\"a`` corresponds to the abstract computation until start of f``\", j, j]];\n    display[fAI];\n    rank[fAI];\n    v = intersection[fAI, fWLP, intDomain];\n    Print[StringForm[\"v`` which needs to be added/already there for f`` is their intersection\", j, j]];\n    display[v];\n    rank[v];\n    v = transfer[v, Max[j - 1, 1]];\n    Print[\"After transfer ...\"];\n    display[v];\n    rank[v];\n    lhs = alpha[op[v, f], S];\n    Print[\"LHS of proof obligation\"];\n    display[lhs];\n    rank[lhs];\n    rhs = opQAIR[alpha[v, S], j];\n    Print[\"RHS of proof obligation\"];\n    display[rhs];\n    rank[rhs];\n    Print[equals[lhs, rhs, S]];\n    If[\n        And @@ equals[lhs, rhs, S],\n        \n        Print[\"Proof obligation satisfied, nothing to be modified!\"];\n        PrependTo[alphaCache, \"\"];\n        PrependTo[gammaCache, \"\"],\n        \n        Print[\"Proof obligation not satisfied, modifying!\"];\n        PrependTo[alphaCache, v];\n        PrependTo[gammaCache, ToString[StringForm[\"u``\", j]]]\n    ],\n\n    {i, Length[func]}\n]",
    "languageId": "wolfram",
-   "outputs": [],
+   "outputs": [
+    {
+     "items": [
+      {
+       "data": "<div class=\"wexpr\"><wgraph class=\"resizable\" style=\"width:19px;height:34px;\" aspect-ratio=\"1.7917\" tabIndex=\"-1\"><img class=\"invert-brightness\" src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAArCAIAAADt+9+sAAAA0npUWHRSYXcgcHJvZmlsZSB0eXBlIGV4aWYAAHjabU9trsMgDPvPKXaEkIADx6EtSLvBjr+ksD3xNEuNHeejJPTXc4SHgyOFlLWgAmRINVVuJgpNTI5U7ziTTy3ufuBj+c2s/FdAX/6x+4rJXP4tIp5C/A+mJa2BtUh4+rHN/Fj93ErZFo06bqwH00nfp//MkygjI2qymJhUUU2XYNIImSkrBk7AGiMupnQad6jaGNQ7pPmgg7vu3T1AzLj8BPEP0ow9RrGLLGbTXnNf+LKot/Zz3r5AXIlrg0yzAAAACXBIWXMAAB2HAAAdhwGP5fFlAAAAPHRFWHRTb2Z0d2FyZQBDcmVhdGVkIHdpdGggdGhlIFdvbGZyYW0gTGFuZ3VhZ2UgOiB3d3cud29sZnJhbS5jb21coqaFAAAAIXRFWHRDcmVhdGlvbiBUaW1lADIwMjY6MDY6MTAgMTU6MjA6MDMqvm6fAAACTklEQVRIS2P8/+8/AzUAEzUMAZkxahDhkBwNo9EwIhwChFWMpiM6hhEjWlF7//79e/fuiYmJqaurs7Gxobnk/fv3169f//v3r66uroCAAIos0CAIOnnipJmZGTMzs7S0NA8Pj4SERE93z98/fyGyDx88jIqKYmFhERcXFxERYWVlTUxMfPvmLVw7A4S1edNmDg6OgoKCVy9fAbl/fv/ZuGGjrKyst7f3zx8/T508JSoq6u/vf/PGTYj6s2fOWlpaqqmpvXj+AiICMujB/QdAJ/T39cONhzCePnkKNCszM1NBQSE5Ofnf33/ICn58/+Hk5OTg4IAwKCMjw9HREc0UCHfb1m3AgAAa9/3bd0wFQJs4OTl37dwFdZG8vPzCBQuxGgR0BTCwSkpKsMoCBYH+LSwsBDJAWeTVq1dAO7EmFUZGRqCUrAx2WaAWOTm5ly9fQus1oJ0PHz7EatD///8fAcHjR7hS5IMHD4DaQbJAV2VnZ9vZ2WF1/KaNm4BqgAni29dvmAoePXwEjOs9u/dAwwjI5+Xl7e7qRlMKTDuSkpJ5eXmKioqxsbHwNAVRBjTa1tbW2dkZEWuQ2AGGf1ZWFjAigNxfP3+tXrVaSkrKz88Pno48PT0vXbwE0Xb0yFETExNNTc2XL16iGARJYzY2NsDQBSZcdnZ2GRmZiRMmwtMO0HVARwETNDBnAJ0P9FFaWtr7d+/hnkDPa0+fPgVmN2BeU1ZWBmYXtDD+/PnzrVu3gHlNS0sLmIaRZdENIlxe4FAxWtQSDrrRMBqKYQQABXkJhNt+Ks4AAAAASUVORK5CYII=\" /></wgraph></div>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "a7aafcae-e911-4b34-a656-226615013171"
+    },
+    {
+     "items": [
+      {
+       "data": "<div class=\"wexpr\"><wgraph class=\"resizable\" style=\"width:19px;height:34px;\" aspect-ratio=\"1.7917\" tabIndex=\"-1\"><img class=\"invert-brightness\" src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAArCAIAAADt+9+sAAAA0npUWHRSYXcgcHJvZmlsZSB0eXBlIGV4aWYAAHjabU9trsMgDPvPKXaEkIADx6EtSLvBjr+ksD3xNEuNHeejJPTXc4SHgyOFlLWgAmRINVVuJgpNTI5U7ziTTy3ufuBj+c2s/FdAX/6x+4rJXP4tIp5C/A+mJa2BtUh4+rHN/Fj93ErZFo06bqwH00nfp//MkygjI2qymJhUUU2XYNIImSkrBk7AGiMupnQad6jaGNQ7pPmgg7vu3T1AzLj8BPEP0ow9RrGLLGbTXnNf+LKot/Zz3r5AXIlrg0yzAAAACXBIWXMAAB2HAAAdhwGP5fFlAAAAPHRFWHRTb2Z0d2FyZQBDcmVhdGVkIHdpdGggdGhlIFdvbGZyYW0gTGFuZ3VhZ2UgOiB3d3cud29sZnJhbS5jb21coqaFAAAAIXRFWHRDcmVhdGlvbiBUaW1lADIwMjY6MDY6MTAgMTU6MjA6MDMqvm6fAAACTklEQVRIS2P8/+8/AzUAEzUMAZkxahDhkBwNo9EwIhwChFWMpiM6hhEjWlF7//79e/fuiYmJqaurs7Gxobnk/fv3169f//v3r66uroCAAIos0CAIOnnipJmZGTMzs7S0NA8Pj4SERE93z98/fyGyDx88jIqKYmFhERcXFxERYWVlTUxMfPvmLVw7A4S1edNmDg6OgoKCVy9fAbl/fv/ZuGGjrKyst7f3zx8/T508JSoq6u/vf/PGTYj6s2fOWlpaqqmpvXj+AiICMujB/QdAJ/T39cONhzCePnkKNCszM1NBQSE5Ofnf33/ICn58/+Hk5OTg4IAwKCMjw9HREc0UCHfb1m3AgAAa9/3bd0wFQJs4OTl37dwFdZG8vPzCBQuxGgR0BTCwSkpKsMoCBYH+LSwsBDJAWeTVq1dAO7EmFUZGRqCUrAx2WaAWOTm5ly9fQus1oJ0PHz7EatD///8fAcHjR7hS5IMHD4DaQbJAV2VnZ9vZ2WF1/KaNm4BqgAni29dvmAoePXwEjOs9u/dAwwjI5+Xl7e7qRlMKTDuSkpJ5eXmKioqxsbHwNAVRBjTa1tbW2dkZEWuQ2AGGf1ZWFjAigNxfP3+tXrVaSkrKz88Pno48PT0vXbwE0Xb0yFETExNNTc2XL16iGARJYzY2NsDQBSZcdnZ2GRmZiRMmwtMO0HVARwETNDBnAJ0P9FFaWtr7d+/hnkDPa0+fPgVmN2BeU1ZWBmYXtDD+/PnzrVu3gHlNS0sLmIaRZdENIlxe4FAxWtQSDrrRMBqKYQQABXkJhNt+Ks4AAAAASUVORK5CYII=\" /></wgraph></div>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "0818c995-5486-47de-92c9-79efc62b6dfc"
+    },
+    {
+     "items": [
+      {
+       "data": "105",
+       "mime": "text/html"
+      }
+     ],
+     "id": "59dbf3e2-665e-44b3-84fd-b418ff6266a2"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>\n\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "3ccbe567-f7f2-4d17-b853-92f6262fa514"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Forward Repair Strategy\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "d3650fa3-fddb-469d-b7c3-31d50bb32253"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "3a07982c-c2b9-446d-a510-c8c43647fca6"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "2e60197e-134d-40e9-8753-06553b774cf9"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "58d20f34-7148-4dd3-84c8-fb2120922dca"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "1bf2ec7a-2435-4d0f-b423-bfba420cffbc"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f1\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "b9b0fbb6-d01a-418a-9622-97237dbd5138"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Check f1\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "610b5082-cd83-4b86-99f8-b98a47f1cd22"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>tCheck f1\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "ae94e948-96e8-4848-9e4b-8909d1be6b1b"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>dCheck f1\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "b54e2b81-a2df-4e75-b3f3-751751548c89"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>opCheck f1\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "9bc7ac2b-b278-46bd-9323-5a3756ea07a8"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "dd62d01f-b0a6-4fe8-b046-0252643c9e3f"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "4b97cfcc-4151-405e-83e2-5aed8a1b117a"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "c8622e03-36b3-495b-8e02-77b1f7a1476f"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "8e60e2d8-c6c0-4740-aec5-6eda8131be33"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f1 strongest postcondition\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "7f72f850-2993-49b0-b805-3471258d1384"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "ba771957-2d93-429d-94b0-7aa8723e60dd"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "723996f9-c947-48fd-9f13-909e6c36e947"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f1 computed by the abstract interpreter\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "2f6e6f9d-5c99-4692-8ded-8a7a2642069a"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "be761b77-af30-4592-bcd1-a8e321d3e183"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f1 is complete and moving to the next one!\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "f255c65d-dd13-4c69-a06f-1e179a1c66f4"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f2\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "5f33feb3-5072-44ca-8cba-50fb612d40a3"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Check f2\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "61d422dd-7afb-46e6-b075-dade1d8133ab"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>tCheck f2\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "50f10096-640b-4dad-81a8-5962e50179d8"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>dCheck f2\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "40ff33c9-2dd4-4a64-bfd1-39a0b9be1249"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>opCheck f2\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "007c8e54-b1b2-419e-9263-956d84b7af14"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "2600be1e-ba12-42c4-944a-3b9b688fe58d"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "32941a61-e514-497b-8d2c-b2d526ae1b5c"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "9e7848e7-1613-47c3-8470-1037ff0f6b76"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "21eb9d1f-a4a4-4574-9717-6ead39d91c0e"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f2 strongest postcondition\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "a6c91e9c-832d-4261-b2bc-7fab1278f737"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "2bcdb4c5-27d0-4a58-ba7a-3d45b6559394"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "59768e8d-d1d0-47c6-bd39-6b48d0f61b97"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f2 computed by the abstract interpreter\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "b90fbc44-bfb0-43a3-90fc-99c4d098fc47"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "56845443-d28e-4196-87f7-b32f203127b5"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f2 is complete and moving to the next one!\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "8e3bebb5-8d50-4f02-9104-4958a9bc70d1"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f3\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "44a80d8a-efb0-40ff-9d85-f45e1dc2a36a"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Check f3\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "f7d74bf8-b88a-4a31-99a5-e06fab2155f4"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>tCheck f3\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "8f8cedbb-2c71-471e-8a57-81ba20b7f214"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>dCheck f3\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "10988a17-4d92-4464-97a5-bceab6972990"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>opCheck f3\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "9bae5f65-c1e0-464b-ad73-d3c1da131f02"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "f4e6b099-e304-4427-8850-e2d8386112bb"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "3588d2ca-7832-4e7f-b589-56e4fc3ddb2b"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "cf3ab011-188a-40c6-9936-e1b50851228e"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "1fbcdeb2-d931-4749-ad3a-8c9dd48cffd2"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f3 strongest postcondition\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "ec18b40a-dd5a-47ca-b510-e293bf80e99d"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "bf281c44-4f7a-4424-8a14-b2e00509b12c"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "8b8673cf-03bf-4a9a-a0f5-2f1bb48ee430"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f3 computed by the abstract interpreter\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "885ca212-bbed-40fb-b7ae-fda7c0fe5762"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "2b80b158-6493-493d-88f9-b0442e950ea4"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f3 is complete and moving to the next one!\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "b0fba825-0150-4db5-b68e-0fe8dedde28f"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f4\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "105ad1bf-4e38-4423-a196-e52ddde327cc"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Check f4\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "b70c67d8-5805-4376-9bf5-c068285fcea2"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>tCheck f4\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "57970866-7b7f-4c96-9a65-5540a2c1148d"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>dCheck f4\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "027b371d-8d1b-400a-b988-553434cf4660"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>opCheck f4\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "9923b468-454c-48e0-a4c1-969fb23affd0"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "02bf6b70-5bd6-4ecc-9ee3-8bbaa1c8208e"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "a9088154-75ec-4d79-a8c1-ad9a5c80c6da"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "9194468d-1a81-405f-b66c-ec50f3131e7b"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "a2592795-6881-4f6f-8329-7a219f03f6d9"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f4 strongest postcondition\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "8de6f43e-ea5a-408e-8f38-5fe8a792ed94"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "69b08261-6f30-42c7-ab79-6566373336f3"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "89659c44-6c8a-4815-84d6-190dd561617d"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f4 computed by the abstract interpreter\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "8ed3b600-a9bb-4409-9043-ed96e3dc396d"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "2c8f31a6-c890-4cd8-97ee-dcee37c2b01f"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f4 is complete and moving to the next one!\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "b4d9f753-ea89-4860-85d3-dce274900108"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f5\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "dfc85e98-1637-4069-92e4-f39638accaea"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Check f5\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "9e814b3f-6cd7-425c-8f0f-8351c495b6e7"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>tCheck f5\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "f824b3a0-9867-4b79-acc4-f10c9ac3412a"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>dCheck f5\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "40c7bb61-d57e-48ae-bdac-b5e65f5f9cf9"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>opCheck f5\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "a8534654-dd3f-4bd1-bcda-b5f6e159165f"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "b5bfb136-631f-4103-b4be-d4dd2e2a50ce"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "1088cc66-97c5-4d3a-ada6-f25e53675b33"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "02a0b7b6-010b-41c1-becd-548fc367d326"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "e5585835-3950-402b-94f1-5f767b0e6487"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f5 strongest postcondition\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "5d92a983-a911-4cb4-975a-59deecaba0a2"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "7b6ed428-2e2b-474c-b55a-84f02fab95b0"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "4e5041b5-31b8-4f29-965e-d669e4709134"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f5 computed by the abstract interpreter\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "28952dcf-2bac-40ea-b571-5ef92e18b4e6"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "d16517ef-8c31-4a9c-b215-5ad02d0d064c"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f5 is complete and moving to the next one!\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "1e118445-46a2-41e6-a200-d33884ecb7d9"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f6\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "0d19bff8-3495-47ba-b978-ffd417cfb392"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Check f6\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "72fcb697-3f4e-4d2c-8128-f898f651b758"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>tCheck f6\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "fc49c131-dd15-4166-9a78-e62c0349ce5d"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>dCheck f6\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "feac1078-cdc5-4f54-acd0-d4acbbdfe940"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>opCheck f6\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "99814a9b-6664-4805-bc13-41cf5df648f2"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "53584df8-a5f5-42dc-9cee-e26d594c4fea"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "bcf534b6-56f7-4b4a-a0ee-8568049a2939"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "61f58823-44a2-42ae-9752-73e3f94480b7"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "8ac5b484-8cf3-4d2f-9b84-6ff12cc13eae"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f6 strongest postcondition\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "58a14b66-a3b8-4cc6-811c-6577d08a5918"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "1def391f-5cd9-4403-83c4-dad410af0033"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "6e0fa360-0485-4716-b2d2-3f82f4b3a242"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f6 computed by the abstract interpreter\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "8da00709-4374-452a-ad4b-1b3b9f799f6a"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "606a3f83-5b47-40d0-acdc-5ef8e37a35a5"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f6 is complete and moving to the next one!\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "c8b29ff3-0ae5-4b9a-927d-e0850dfbd9bc"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f7\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "f8e393d2-66a5-4d79-8f20-ce5f34c35a1a"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Check f7\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "3628afc1-5a45-4b56-8cbf-6052ce3fe15a"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>tCheck f7\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "1fefa39d-335c-4fda-a606-ae84a55d833c"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>dCheck f7\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "17125e7f-adff-4094-bbb0-9b51d84ca212"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>opCheck f7\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "a8cff682-d6a1-4389-a0bf-5349af81898e"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "c31304fe-fd6d-41ed-b88f-71b9c2c1d21b"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "a3055a26-5583-42c6-8478-cc5f9d38dc6a"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "7e346703-a4be-4067-8aa5-4ce9af205852"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "688a32e5-d2e5-488d-856c-78b40b201ec2"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f7 strongest postcondition\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "e769b5e5-9a3c-4a84-85f3-e4bea9729d3c"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "7885aa0a-4217-47c4-a5d1-ebab0aedbcf9"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "a329f203-5a5a-4df1-aba2-bb49375ded16"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f7 computed by the abstract interpreter\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "d3aa8daa-1e37-48f6-943d-9d1a408f891d"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "91754826-5035-4280-ae56-797d39e5acb1"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f7 is complete and moving to the next one!\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "f64e0232-60f8-486d-a845-802c0d6941b5"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>f8\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "0aa3b5c0-d842-49fa-9c6c-0148e21849b0"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Check f8\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "eab0dcea-e2d6-4e05-84f2-e4b1266ae598"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>tCheck f8\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "13149b60-94e2-42a6-a196-1ee66b683ddc"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>dCheck f8\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "2adb30d7-413d-4403-9b6c-548ca63b002f"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>opCheck f8\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "5a68742d-9f72-4071-a46d-6103d2a342cd"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "e7caae39-ada9-4bb1-91f5-28ffbbce83a5"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "871969dd-b8a1-4a3e-ae3b-0abc1335af77"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Enter alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "7ab07f69-3e07-4d92-a0d1-153fdb2f9023"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>Tuples for alpha\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "c67f0949-6123-4f70-b6a6-f41b0c211c27"
+    }
+   ],
    "metadata": {},
    "executionSummary": {}
   }
