@@ -2,26 +2,98 @@
  "cells": [
   {
    "kind": 2,
-   "value": "$MaxPrecision = \\[Infinity]\n$MaxExtraPrecision = \\[Infinity]\nMatrixForm[a = {{1}, {0}}]; (* Corresponds to ket 0 *)\nMatrixForm[b = {{0}, {1}}]; (* Corresponds to ket 1 *)\nMatrixForm[SWAP = {{1, 0, 0, 0}, {0, 0, 1, 0}, {0, 1, 0, 0}, {0, 0, 0, 1}}]; (* Swap gate needed for expanding in the correct order *)\nn = 8; (* Number of qubits in the concrete domain *)\nk = 2; (* Number of qubits in every tuple of the abstract domain *)\nNM = {Range[n]}; (* Concrete Domain *)\nS = Subsets[Range[n], {k}]; (* Abstract Domain *)\n\nH = {{1/Sqrt[2], 1/Sqrt[2]}, {1/Sqrt[2], -1/Sqrt[2]}};\nZ = {{1, 0}, {0, -1}};\nT = {{1, 0}, {0, 1/Sqrt[2] + 1/Sqrt[2]I}};\nTD = {{1, 0}, {0, 1/Sqrt[2] - 1/Sqrt[2]I}};\nSP = {{1, 0}, {0, I}};\nCX = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 0, 1}, {0, 0, 1, 0}};\nCZ = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, -1}};\n\n(* These are used to initialize unit vectors. For instance, |010> would be represented by {a, b, a}.\nThe first function, kpl, returns a list of unit vectors given their representation.\nThe second function, den, is used to convert a unit vector to a density matrix.\nThe third function, ent, is used to create an entangled state represented as a projection. An example usage would be ent[{{a, a, a}, {b, b, b}}] which would create the maximally entangled state.\nThe fourth function, mix, is used to create a mixed state represented as a projection. An example usage would be mix[{{a, a, a}, {b, b, b}}] which would create a convex combination of |000> and |111>. *)\nkpl[listBasic_] := (KroneckerProduct @@ listBasic)\nden[vec_] := (vec.ConjugateTranspose[vec])\nent[listEnt_] := (supp[den[Total[kpl /@ listEnt]]])\nmix[listMix_] := (supp[Total[den /@ kpl /@ listMix]])\n \n(* This mirrors the exact Java code artifact for QAI. *)\nsupp[mat_] := (\n    basis = ConjugateTranspose[Orthogonalize[ConjugateTranspose[mat]]];\n    Simplify[basis.ConjugateTranspose[basis]])\n\nintersectionTuple[listMeet_] := (\n    len = Length[listMeet[[1]]];\n    join = supp[Total[(IdentityMatrix[len] - #)& /@ listMeet]];\n    IdentityMatrix[len] - join)\n\nintersection[state1_, state2_, dom_] := (# -> intersectionTuple[{#/.state1, #/.state2}]& /@ dom)\n \ntrace[matrix_, original_, discard_] := (ResourceFunction[\"MatrixPartialTrace\"][matrix, First[FirstPosition[original, #]]& /@ discard, 2])\nalphaTuple[concState_, absKey_] := (absKey -> intersectionTuple[supp[trace[#[[2]], #[[1]], Complement[#[[1]], absKey]]]& /@ Select[concState, SubsetQ[#[[1]], absKey]&]])\nalpha[Q_, abs_] := (\n    Print[\"Enter alpha\"];\n    If[\n        MemberQ[alphaCache, Q] && !ContainsExactly[Keys[Q], abs],\n        gammaCache[[FirstPosition[alphaCache, Q][[1]]]],\n        (Print[\"Tuples for alpha\"]; alphaTuple[Q, #]& /@ abs)\n    ])\n \nexpand[key_, val_, expKey_] := (\n    z = Join[key, Complement[expKey, key]];\n    d = Length[z] - Length[key];\n    x = KroneckerProduct[val, IdentityMatrix[2^d]];\n    y = x;\n    z = z//.{g1___, g2_, g3_, g4___}/; g2 > g3 :> (\n        p = Length[{g1}];\n        q = Length[{g4}];\n        w = KroneckerProduct[IdentityMatrix[2^p], SWAP, IdentityMatrix[2^q]];\n        y = apply[w,y];\n        {g1,g3,g2,g4}\n    );\n    y)\n\ngammaTuple[absState_, concKey_] := (concKey -> intersectionTuple[expand[#[[1]], #[[2]], concKey]& /@ Select[absState, SubsetQ[concKey, #[[1]]]&]])\ngammaQAI[Pr_, conc_] := (gammaTuple[Pr, #]& /@ conc)\ngamma[P_, indx_] := (\n    If[\n        StringQ[P],\n\n        idx = ToExpression[StringTake[P, -StringLength[P] + 1]];\n        transfer[alphaCache[[idx]], indx],\n        \n        gammaTuple[P, #]& /@ funcR[[indx]]\n    ])\n\nunion[fEx_, absKeys_] := (DeleteDuplicates[Union[#, fEx]& /@ absKeys])\n \napply[u_, m_] := (Simplify[u.m.ConjugateTranspose[u]])\nopTuple[midTuple_, f_] := (midTuple[[1]] -> apply[expand[f[[1]], f[[2]], midTuple[[1]]], midTuple[[2]]])\n\nopQAI[abState_, fn_] := (\n    If[\n        StringQ[P],\n        kP = S,\n        kP = Keys[abState]\n    ];\n    R = DeleteDuplicates[Union[#, fn[[1]]]& /@ kP];\n    mid = gammaQAI[abState, R];\n    app = opTuple[#, fn]& /@ mid;\n    alpha[app, kP])\n\nopQAIR[abSt_, ind_] := (\n    intSt = gamma[abSt, ind];\n    resSt = opTuple[#, func[[ind]]]& /@ intSt;\n    (* One can easily change this for more flexibility. *)\n    alpha[resSt, S])\n\nop[midState_, fnc_] := (opTuple[#, fnc]& /@ midState)\n \ndisplayTuple[tuple_] := (Magnify[tuple[[1]] -> MatrixForm[tuple[[2]]], 2])\ndisplay[listTuple_] := (\n    If[\n        StringQ[listTuple],\n        Print[listTuple],\n        Print[displayTuple /@ listTuple]\n    ])\n\ntransfer[intState_, index_] := (\n    tint = union[func[[index]][[1]], Keys[intState]];\n    tdom = funcR[[index]];\n    alpha[gammaQAI[intState, tint], tdom])\n \nequals[st1_, st2_, domain_] :=(\n    If[\n        StringQ[st1],\n        st1 == st2,\n        (#/.st1)==(#/.st2)& /@ domain\n    ])\n\n(* Helper functions for better analysis.\nThe first function, rank, finds the dimension of a projection.\nThe second function, psd, allows us to compare elements. For example, say we want to see if P <= Q. By the Lowner order, this is true iff Q - P is positive-semidefinite. If psd[Q - P] prints true, we have our verification. Otherwise, we can always test psd[P - Q] and if true, we know Q <= P. If both calls are false, they are uncomparable. *)\nrank[st_] := (If[StringQ[st], Print[\"Dummy point has no rank!\"], Print[MatrixRank[#[[2]]]& /@ st]])\npsd[state_] := (PositiveSemidefiniteMatrixQ[#[[2]]]& /@ state)\n \n(* Now begins the actual code execution of the Local Completeness refinement computations. The following code applies to Grover but one can easily play around by changing the number and definitions of functions (f1, f2, etc.) being composed. Note that g1 is the inverse of f1, etc. *)\nfunc = {\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {5} -> H,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {5} -> T,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {1, 2} -> CX,\n    {2} -> TD,\n    {1, 2} -> CX,\n    {1} -> TD,\n    {2} -> TD,\n    {5} -> T,\n    {5} -> H,\n    {6} -> H,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {6} -> T,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {3, 4} -> CX,\n    {4} -> TD,\n    {3, 4} -> CX,\n    {3} -> TD,\n    {4} -> TD,\n    {6} -> T,\n    {6} -> H,\n    {7} -> H,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {7} -> T,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {5, 6} -> CX,\n    {6} -> TD,\n    {5, 6} -> CX,\n    {5} -> TD,\n    {6} -> TD,\n    {7} -> T,\n    {7} -> H,\n    {7, 8} -> CZ,\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {5} -> H,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {5} -> T,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {1, 2} -> CX,\n    {2} -> TD,\n    {1, 2} -> CX,\n    {1} -> TD,\n    {2} -> TD,\n    {5} -> T,\n    {5} -> H,\n    {6} -> H,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {6} -> T,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {3, 4} -> CX,\n    {4} -> TD,\n    {3, 4} -> CX,\n    {3} -> TD,\n    {4} -> TD,\n    {6} -> T,\n    {6} -> H,\n    {7} -> H,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {7} -> T,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {5, 6} -> CX,\n    {6} -> TD,\n    {5, 6} -> CX,\n    {5} -> TD,\n    {6} -> TD,\n    {7} -> T,\n    {7} -> H,\n    {7, 8} -> CZ,\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {1} -> Z\n};\n\nfuncR = union[#[[1]], S]& /@ func;\nLength[func]\n \n(* Starting state *)\ninit = Thread[NM -> {ent[{{a, a, a, a, a, a, a, a}}]}]; (* span{ |00000000> } *)\nc = init;\n(*display[init];\nrank[init];*)\n\nPrint[\"\\n\"]\nPrint[\"Forward Repair Strategy\"]\n\nalphaCache = {};\ngammaCache = {};\nfSP = alpha[alpha[init, funcR[[1]]], S];\n\nDo[\n    Print[StringForm[\"f``\", i]];\n    f=func[[i]];\n    Print[StringForm[\"Check f``\", i]];\n    tfSP = fSP;\n    Print[StringForm[\"tCheck f``\", i]];\n    intDom = funcR[[i]];\n    Print[StringForm[\"dCheck f``\", i]];\n    c=op[c, f];\n    Print[StringForm[\"opCheck f``\", i]];\n    fSP = alpha[alpha[c, intDom], S];\n    Print[StringForm[\"f`` strongest postcondition\", i]];\n    (*display[fSP];\n    rank[fSP];*)\n    fAI = opQAIR[tfSP, i];\n    Print[StringForm[\"f`` computed by the abstract interpreter\", i]];\n    (*display[fAI];\n    rank[fAI];*)\n    Print[equals[fAI, fSP, S]];\n    If[\n        And @@ equals[fAI, fSP, S],\n        \n        Print[StringForm[\"f`` is complete and moving to the next one!\", i]];\n        AppendTo[alphaCache, \"\"];\n        AppendTo[gammaCache, \"\"],\n        \n        Print[StringForm[\"Repairing since f`` is incomplete!\", i]];\n        g = f;\n        g[[2]] = ConjugateTranspose[f[[2]]];\n        fMissing = op[gamma[fSP, i], g];\n        Print[StringForm[\"Max element in the intermediate whose f`` image is <= f``SP\", i, i]];\n        display[fMissing];\n        rank[fMissing];\n        fUpperBound = gamma[tfSP, i];\n        Print[\"Max allowable element in the intermediate\"];\n        display[fUpperBound];\n        rank[fUpperBound];\n        u=intersection[fMissing, fUpperBound, intDom];\n        Print[StringForm[\"Actual u for f`` is their intersection\", i]];\n        display[u];\n        rank[u];\n        u = transfer[u, Max[i - 1, 1]];\n        Print[\"After transfer ...\"];\n        display[u];\n        rank[u];\n        AppendTo[alphaCache, u];\n        AppendTo[gammaCache, ToString[StringForm[\"u``\", i]]]\n    ],\n    \n    {i, Length[func]}\n]\n\nPrint[alphaCache]\nPrint[gammaCache]\nPrint[\"Again\"]\nc = init;\n\nfSP = alpha[alpha[init, funcR[[1]]], S];\n\nDo[\n    f=func[[i]];\n    tfSP = fSP;\n    intDom = funcR[[i]];\n    c=op[c, f];\n    fSP = alpha[alpha[c, intDom], S];\n    Print[StringForm[\"f`` strongest postcondition\", i]];\n    display[fSP];\n    rank[fSP];\n    fAI = opQAIR[tfSP, i];\n    Print[StringForm[\"f`` computed by the abstract interpreter\", i]];\n    display[fAI];\n    rank[fAI];\n    Print[equals[fAI, fSP, S]];\n    If[\n        And @@ equals[fAI, fSP, S],\n        \n        Print[StringForm[\"f`` is complete and moving to the next one!\", i]];\n        AppendTo[alphaCache, \"\"];\n        AppendTo[gammaCache, \"\"],\n        \n        Print[StringForm[\"Repairing since f`` is incomplete!\", i]];\n        g = f;\n        g[[2]] = ConjugateTranspose[f[[2]]];\n        fMissing = op[gamma[fSP, i], g];\n        Print[StringForm[\"Max element in the intermediate whose f`` image is <= f``SP\", i, i]];\n        display[fMissing];\n        rank[fMissing];\n        fUpperBound = gamma[tfSP, i];\n        Print[\"Max allowable element in the intermediate\"];\n        display[fUpperBound];\n        rank[fUpperBound];\n        u=intersection[fMissing, fUpperBound, intDom];\n        Print[StringForm[\"Actual u for f`` is their intersection\", i]];\n        display[u];\n        rank[u];\n        u = transfer[u, Max[i - 1, 1]];\n        Print[\"After transfer ...\"];\n        display[u];\n        rank[u];\n        AppendTo[alphaCache, u];\n        AppendTo[gammaCache, ToString[StringForm[\"u``\", i]]]\n    ],\n    \n    {i, Length[func]}\n]\n\nPrint[\"==================================================================\"]\nPrint[\"\\n\"]\nPrint[\"Backward Repair Strategy\"]\n \nalphaCache = {};\ngammaCache = {};\nabsCache = {};\n\nspec = gamma[alpha[op[op[op[init, f1], f2], f3], S], -1];\nv = spec;\nPrint[\"\\n\"]\nPrint[StringForm[\"v`` corresponds to spec which here corresponds to the strongest postcondition for f(c)\", Length[func] + 1]]\ndisplay[v]\nrank[v]\n\nfAI = alpha[alpha[init, funcR[[1]]], S];\nAppendTo[absCache, fAI];\nDo[\n    fAI = opQAIR[fAI, i];\n    AppendTo[absCache, fAI],\n    \n    {i, Length[func] - 1}\n]\n\nDo[\n    j = Length[func] - i + 1;\n    f=func[[j]];\n    intDomain = funcR[[j]];\n    g = f;\n    g[[2]] = ConjugateTranspose[f[[2]]];\n    fWLP = op[v, g];\n    Print[StringForm[\"f`` weakest liberal precondition\", j]];\n    display[fWLP];\n    rank[fWLP];\n    fAI = gamma[absCache[[j]], j];\n    Print[StringForm[\"a`` corresponds to the abstract computation until start of f``\", j, j]];\n    display[fAI];\n    rank[fAI];\n    v = intersection[fAI, fWLP, intDomain];\n    Print[StringForm[\"v`` which needs to be added/already there for f`` is their intersection\", j, j]];\n    display[v];\n    rank[v];\n    v = transfer[v, Max[j - 1, 1]];\n    Print[\"After transfer ...\"];\n    display[v];\n    rank[v];\n    lhs = alpha[op[v, f], S];\n    Print[\"LHS of proof obligation\"];\n    display[lhs];\n    rank[lhs];\n    rhs = opQAIR[alpha[v, S], j];\n    Print[\"RHS of proof obligation\"];\n    display[rhs];\n    rank[rhs];\n    Print[equals[lhs, rhs, S]];\n    If[\n        And @@ equals[lhs, rhs, S],\n        \n        Print[\"Proof obligation satisfied, nothing to be modified!\"];\n        PrependTo[alphaCache, \"\"];\n        PrependTo[gammaCache, \"\"],\n        \n        Print[\"Proof obligation not satisfied, modifying!\"];\n        PrependTo[alphaCache, v];\n        PrependTo[gammaCache, ToString[StringForm[\"u``\", j]]]\n    ],\n\n    {i, Length[func]}\n]\n\nPrint[\"Again\"]\nabsCache = {};\nv = spec;\nPrint[\"\\n\"]\nPrint[StringForm[\"v`` corresponds to spec which here corresponds to the strongest postcondition for f(c)\", Length[func] + 1]]\ndisplay[v]\nrank[v]\n\nfAI = alpha[alpha[init, funcR[[1]]], S];\nAppendTo[absCache, fAI];\nDo[\n    fAI = opQAIR[fAI, i];\n    AppendTo[absCache, fAI],\n    \n    {i, Length[func] - 1}\n]\n\nDo[\n    j = Length[func] - i + 1;\n    f=func[[j]];\n    intDomain = funcR[[j]];\n    g = f;\n    g[[2]] = ConjugateTranspose[f[[2]]];\n    fWLP = op[v, g];\n    Print[StringForm[\"f`` weakest liberal precondition\", j]];\n    display[fWLP];\n    rank[fWLP];\n    fAI = gamma[absCache[[j]], j];\n    Print[StringForm[\"a`` corresponds to the abstract computation until start of f``\", j, j]];\n    display[fAI];\n    rank[fAI];\n    v = intersection[fAI, fWLP, intDomain];\n    Print[StringForm[\"v`` which needs to be added/already there for f`` is their intersection\", j, j]];\n    display[v];\n    rank[v];\n    v = transfer[v, Max[j - 1, 1]];\n    Print[\"After transfer ...\"];\n    display[v];\n    rank[v];\n    lhs = alpha[op[v, f], S];\n    Print[\"LHS of proof obligation\"];\n    display[lhs];\n    rank[lhs];\n    rhs = opQAIR[alpha[v, S], j];\n    Print[\"RHS of proof obligation\"];\n    display[rhs];\n    rank[rhs];\n    Print[equals[lhs, rhs, S]];\n    If[\n        And @@ equals[lhs, rhs, S],\n        \n        Print[\"Proof obligation satisfied, nothing to be modified!\"];\n        PrependTo[alphaCache, \"\"];\n        PrependTo[gammaCache, \"\"],\n        \n        Print[\"Proof obligation not satisfied, modifying!\"];\n        PrependTo[alphaCache, v];\n        PrependTo[gammaCache, ToString[StringForm[\"u``\", j]]]\n    ],\n\n    {i, Length[func]}\n]",
+   "value": "(* $MaxPrecision = \\[Infinity]\n$MaxExtraPrecision = \\[Infinity] *)\na = N[{{1}, {0}}] (* Corresponds to ket 0 *)\nb = N[{{0}, {1}}] (* Corresponds to ket 1 *)\nSWAP = N[{{1, 0, 0, 0}, {0, 0, 1, 0}, {0, 1, 0, 0}, {0, 0, 0, 1}}] (* Swap gate needed for expanding in the correct order *)\nn = 8; (* Number of qubits in the concrete domain *)\nk = 2; (* Number of qubits in every tuple of the abstract domain *)\nNM = {Range[n]}; (* Concrete Domain *)\nS = Subsets[Range[n], {k}]; (* Abstract Domain *)\n\nH = N[{{1/Sqrt[2], 1/Sqrt[2]}, {1/Sqrt[2], -1/Sqrt[2]}}]\nZ = N[{{1, 0}, {0, -1}}]\nT = N[{{1, 0}, {0, 1/Sqrt[2] + 1/Sqrt[2]I}}]\nTD = N[{{1, 0}, {0, 1/Sqrt[2] - 1/Sqrt[2]I}}]\nSP = N[{{1, 0}, {0, I}}]\nCX = N[{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 0, 1}, {0, 0, 1, 0}}]\nCZ = N[{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, -1}}]\n\n(* These are used to initialize unit vectors. For instance, |010> would be represented by {a, b, a}.\nThe first function, kpl, returns a list of unit vectors given their representation.\nThe second function, den, is used to convert a unit vector to a density matrix.\nThe third function, ent, is used to create an entangled state represented as a projection. An example usage would be ent[{{a, a, a}, {b, b, b}}] which would create the maximally entangled state.\nThe fourth function, mix, is used to create a mixed state represented as a projection. An example usage would be mix[{{a, a, a}, {b, b, b}}] which would create a convex combination of |000> and |111>. *)\nkpl[listBasic_] := (KroneckerProduct @@ listBasic)\nden[vec_] := (vec.ConjugateTranspose[vec])\nent[listEnt_] := (supp[den[Total[kpl /@ listEnt]]])\nmix[listMix_] := (supp[Total[den /@ kpl /@ listMix]])\n \n(* This mirrors the exact Java code artifact for QAI. *)\nsupp[mat_] := (\n    (* If[i === 8, Print[\"Dimensions: \", Dimensions[mat]]];\n    If[i === 8, Print[InputForm[mat]]];\n    If[i === 8, Print[\"Element types: \", Head /@ Flatten[mat]]];\n    If[i === 8, Print[\"Precisions: \", Precision /@ Flatten[mat]]]; *)\n    (* If[i === 8, Print[\"mat dimensions: \", Dimensions[mat]]];\n    If[i === 8, Print[\"mat head: \", Head[mat]]];\n\n    If[i === 8, Print[\"Starting first transpose\"]]; *)\n    mt = ConjugateTranspose[mat];\n    (* If[i === 8, Print[\"Finished first transpose\"]];\n\n    If[i === 8, Print[\"Starting orthogonalization\"]]; *)\n    ot = Orthogonalize[mt];\n    (* If[i === 8, Print[\"Finished orthogonalization\"]];\n\n    If[i === 8, Print[\"Starting second transpose\"]]; *)\n    basis = ConjugateTranspose[ot];\n    (* If[i === 8, Print[\"Finished second transpose\"]]; *)\n\n    res = basis.ConjugateTranspose[basis];\n    res)\n\nintersectionTuple[listMeet_] := (\n    len = Length[listMeet[[1]]];\n    tot = Total[(N[IdentityMatrix[len]] - #)& /@ listMeet];\n    join = supp[tot];\n    N[IdentityMatrix[len]] - join)\n\nintersection[state1_, state2_, dom_] := (# -> intersectionTuple[{#/.state1, #/.state2}]& /@ dom)\n \ntrace[matrix_, original_, discard_] := (ResourceFunction[\"MatrixPartialTrace\"][matrix, First[FirstPosition[original, #]]& /@ discard, 2])\nalphaTuple[concState_, absKey_] := (absKey -> intersectionTuple[supp[trace[#[[2]], #[[1]], Complement[#[[1]], absKey]]]& /@ Select[concState, SubsetQ[#[[1]], absKey]&]])\nalpha[Q_, abs_] := (\n    If[\n        MemberQ[alphaCache, Q] && !ContainsExactly[Keys[Q], abs],\n        gammaCache[[FirstPosition[alphaCache, Q][[1]]]],\n        alphaTuple[Q, #]& /@ abs\n    ])\n \nexpand[key_, val_, expKey_] := (\n    z = Join[key, Complement[expKey, key]];\n    d = Length[z] - Length[key];\n    x = KroneckerProduct[val, N[IdentityMatrix[2^d]]];\n    y = x;\n    z = z//.{g1___, g2_, g3_, g4___}/; g2 > g3 :> (\n        p = Length[{g1}];\n        q = Length[{g4}];\n        w = KroneckerProduct[N[IdentityMatrix[2^p]], SWAP, N[IdentityMatrix[2^q]]];\n        y = apply[w,y];\n        {g1,g3,g2,g4}\n    );\n    y)\n\ngammaTuple[absState_, concKey_] := (concKey -> intersectionTuple[expand[#[[1]], #[[2]], concKey]& /@ Select[absState, SubsetQ[concKey, #[[1]]]&]])\ngammaQAI[Pr_, conc_] := (gammaTuple[Pr, #]& /@ conc)\ngamma[P_, indx_] := (\n    If[\n        StringQ[P],\n\n        idx = ToExpression[StringTake[P, -StringLength[P] + 1]];\n        transfer[alphaCache[[idx]], indx],\n        \n        gammaTuple[P, #]& /@ funcR[[indx]]\n    ])\n\nunion[fEx_, absKeys_] := (DeleteDuplicates[Union[#, fEx]& /@ absKeys])\n \napply[u_, m_] := (u.m.ConjugateTranspose[u])\nopTuple[midTuple_, f_] := (midTuple[[1]] -> apply[expand[f[[1]], f[[2]], midTuple[[1]]], midTuple[[2]]])\n\nopQAI[abState_, fn_] := (\n    If[\n        StringQ[P],\n        kP = S,\n        kP = Keys[abState]\n    ];\n    R = DeleteDuplicates[Union[#, fn[[1]]]& /@ kP];\n    mid = gammaQAI[abState, R];\n    app = opTuple[#, fn]& /@ mid;\n    alpha[app, kP])\n\nopQAIR[abSt_, ind_] := (\n    intSt = gamma[abSt, ind];\n    resSt = opTuple[#, func[[ind]]]& /@ intSt;\n    (* One can easily change this for more flexibility. *)\n    alpha[resSt, S])\n\nop[midState_, fnc_] := (opTuple[#, fnc]& /@ midState)\n \ndisplayTuple[tuple_] := (Magnify[tuple[[1]] -> MatrixForm[tuple[[2]]], 2])\ndisplay[listTuple_] := (\n    If[\n        StringQ[listTuple],\n        Print[listTuple],\n        Print[displayTuple /@ listTuple]\n    ])\n\ntransfer[intState_, index_] := (\n    tint = union[func[[index]][[1]], Keys[intState]];\n    tdom = funcR[[index]];\n    alpha[gammaQAI[intState, tint], tdom])\n \nequals[st1_, st2_, domain_] :=(\n    If[\n        StringQ[st1],\n        st1 == st2,\n        (#/.st1)==(#/.st2)& /@ domain\n    ])\n\n(* Helper functions for better analysis.\nThe first function, rank, finds the dimension of a projection.\nThe second function, psd, allows us to compare elements. For example, say we want to see if P <= Q. By the Lowner order, this is true iff Q - P is positive-semidefinite. If psd[Q - P] prints true, we have our verification. Otherwise, we can always test psd[P - Q] and if true, we know Q <= P. If both calls are false, they are uncomparable. *)\nrank[st_] := (If[StringQ[st], Print[\"Dummy point has no rank!\"], Print[MatrixRank[#[[2]]]& /@ st]])\npsd[state_] := (PositiveSemidefiniteMatrixQ[#[[2]]]& /@ state)\n \n(* Now begins the actual code execution of the Local Completeness refinement computations. The following code applies to Grover but one can easily play around by changing the number and definitions of functions (f1, f2, etc.) being composed. Note that g1 is the inverse of f1, etc. *)\nfunc = {\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {5} -> H,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {5} -> T,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {1, 2} -> CX,\n    {2} -> TD,\n    {1, 2} -> CX,\n    {1} -> TD,\n    {2} -> TD,\n    {5} -> T,\n    {5} -> H,\n    {6} -> H,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {6} -> T,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {3, 4} -> CX,\n    {4} -> TD,\n    {3, 4} -> CX,\n    {3} -> TD,\n    {4} -> TD,\n    {6} -> T,\n    {6} -> H,\n    {7} -> H,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {7} -> T,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {5, 6} -> CX,\n    {6} -> TD,\n    {5, 6} -> CX,\n    {5} -> TD,\n    {6} -> TD,\n    {7} -> T,\n    {7} -> H,\n    {7, 8} -> CZ,\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {5} -> H,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {5} -> T,\n    {2, 5} -> CX,\n    {5} -> T,\n    {1, 5} -> CX,\n    {1, 2} -> CX,\n    {2} -> TD,\n    {1, 2} -> CX,\n    {1} -> TD,\n    {2} -> TD,\n    {5} -> T,\n    {5} -> H,\n    {6} -> H,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {6} -> T,\n    {4, 6} -> CX,\n    {6} -> T,\n    {3, 6} -> CX,\n    {3, 4} -> CX,\n    {4} -> TD,\n    {3, 4} -> CX,\n    {3} -> TD,\n    {4} -> TD,\n    {6} -> T,\n    {6} -> H,\n    {7} -> H,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {7} -> T,\n    {6, 7} -> CX,\n    {7} -> T,\n    {5, 7} -> CX,\n    {5, 6} -> CX,\n    {6} -> TD,\n    {5, 6} -> CX,\n    {5} -> TD,\n    {6} -> TD,\n    {7} -> T,\n    {7} -> H,\n    {7, 8} -> CZ,\n    {1} -> H,\n    {2} -> H,\n    {3} -> H,\n    {4} -> H,\n    {1} -> Z\n};\n\nfuncR = union[#[[1]], S]& /@ func;\nLength[func]\n \n(* Starting state *)\ninit = Thread[NM -> {ent[{{a, a, a, a, a, a, a, a}}]}]; (* span{ |00000000> } *)\nc = init;\n(*display[init];\nrank[init];*)\n\n(* Print[\"\\n\"]\nPrint[\"Forward Repair Strategy\"]\n\nalphaCache = {};\ngammaCache = {};\nfSP = alpha[alpha[init, funcR[[1]]], S];\n\nDo[\n    Print[StringForm[\"f``\", i]];\n    f=func[[i]];\n    (* Print[StringForm[\"Check f``\", i]]; *)\n    tfSP = fSP;\n    (* Print[StringForm[\"tCheck f``\", i]]; *)\n    intDom = funcR[[i]];\n    (* Print[StringForm[\"dCheck f``\", i]]; *)\n    c=op[c, f];\n    (* Print[StringForm[\"opCheck f``\", i]]; *)\n    fSP = alpha[alpha[c, intDom], S];\n    Print[StringForm[\"f`` strongest postcondition\", i]];\n    (*display[fSP];\n    rank[fSP];*)\n    fAI = opQAIR[tfSP, i];\n    Print[StringForm[\"f`` computed by the abstract interpreter\", i]];\n    (*display[fAI];\n    rank[fAI];*)\n    Print[equals[fAI, fSP, S]];\n    If[\n        And @@ equals[fAI, fSP, S],\n        \n        Print[StringForm[\"f`` is complete and moving to the next one!\", i]];\n        AppendTo[alphaCache, \"\"];\n        AppendTo[gammaCache, \"\"],\n        \n        Print[StringForm[\"Repairing since f`` is incomplete!\", i]];\n        g = f;\n        g[[2]] = ConjugateTranspose[f[[2]]];\n        fMissing = op[gamma[fSP, i], g];\n        Print[StringForm[\"Max element in the intermediate whose f`` image is <= f``SP\", i, i]];\n        (* display[fMissing];\n        rank[fMissing]; *)\n        fUpperBound = gamma[tfSP, i];\n        Print[\"Max allowable element in the intermediate\"];\n        (* display[fUpperBound];\n        rank[fUpperBound]; *)\n        u=intersection[fMissing, fUpperBound, intDom];\n        Print[StringForm[\"Actual u for f`` is their intersection\", i]];\n        (* display[u];\n        rank[u]; *)\n        u = transfer[u, Max[i - 1, 1]];\n        Print[\"After transfer ...\"];\n        (* display[u];\n        rank[u]; *)\n        AppendTo[alphaCache, u];\n        AppendTo[gammaCache, ToString[StringForm[\"u``\", i]]]\n    ],\n    \n    {i, Length[func]}\n]\n\n(* Print[alphaCache]\nPrint[gammaCache] *)\nPrint[\"Again\"]\nc = init;\n\nfSP = alpha[alpha[init, funcR[[1]]], S];\n\nDo[\n    f=func[[i]];\n    tfSP = fSP;\n    intDom = funcR[[i]];\n    c=op[c, f];\n    fSP = alpha[alpha[c, intDom], S];\n    Print[StringForm[\"f`` strongest postcondition\", i]];\n    (* display[fSP]; *)\n    (* rank[fSP]; *)\n    fAI = opQAIR[tfSP, i];\n    Print[StringForm[\"f`` computed by the abstract interpreter\", i]];\n    (* display[fAI]; *)\n    (* rank[fAI]; *)\n    Print[equals[fAI, fSP, S]];\n    If[\n        And @@ equals[fAI, fSP, S],\n        \n        Print[StringForm[\"f`` is complete and moving to the next one!\", i]];\n        AppendTo[alphaCache, \"\"];\n        AppendTo[gammaCache, \"\"],\n        \n        Print[StringForm[\"Repairing since f`` is incomplete!\", i]];\n        g = f;\n        g[[2]] = ConjugateTranspose[f[[2]]];\n        fMissing = op[gamma[fSP, i], g];\n        Print[StringForm[\"Max element in the intermediate whose f`` image is <= f``SP\", i, i]];\n        (* display[fMissing]; *)\n        (* rank[fMissing]; *)\n        fUpperBound = gamma[tfSP, i];\n        Print[\"Max allowable element in the intermediate\"];\n        (* display[fUpperBound]; *)\n        (* rank[fUpperBound]; *)\n        u=intersection[fMissing, fUpperBound, intDom];\n        Print[StringForm[\"Actual u for f`` is their intersection\", i]];\n        (* display[u]; *)\n        (* rank[u]; *)\n        u = transfer[u, Max[i - 1, 1]];\n        Print[\"After transfer ...\"];\n        (* display[u]; *)\n        (* rank[u]; *)\n        AppendTo[alphaCache, u];\n        AppendTo[gammaCache, ToString[StringForm[\"u``\", i]]]\n    ],\n    \n    {i, Length[func]}\n] *)\n\nPrint[\"==================================================================\"]\nPrint[\"\\n\"]\nPrint[\"Backward Repair Strategy\"]\n \nalphaCache = {};\ngammaCache = {};\nabsCache = {};\n\nsp = init;\nDo[\n    Print[i];\n    sp = op[sp, func[[i]]],\n    \n    {i, Length[func] - 1}\n]\n\nspec = alpha[sp, S];\nv = spec;\nPrint[\"\\n\"]\nPrint[StringForm[\"v`` corresponds to spec which here corresponds to the strongest postcondition for f(c)\", Length[func] + 1]]\n(* display[v]\nrank[v] *)\n\nfAI = alpha[alpha[init, funcR[[1]]], S];\nAppendTo[absCache, fAI];\nDo[\n    Print[i];\n    fAI = opQAIR[fAI, i];\n    AppendTo[absCache, fAI],\n    \n    {i, Length[func] - 1}\n]\n\nDo[\n    j = Length[func] - i + 1;\n    f=func[[j]];\n    intDomain = funcR[[j]];\n    g = f;\n    g[[2]] = ConjugateTranspose[f[[2]]];\n    fWLP = opQAI[v, g];\n    Print[StringForm[\"f`` weakest liberal precondition\", j]];\n    (* display[fWLP]; *)\n    (* rank[fWLP]; *)\n    fAI = gamma[absCache[[j]], j];\n    Print[StringForm[\"a`` corresponds to the abstract computation until start of f``\", j, j]];\n    (* display[fAI]; *)\n    (* rank[fAI]; *)\n    v = intersection[fAI, fWLP, intDomain];\n    Print[StringForm[\"v`` which needs to be added/already there for f`` is their intersection\", j, j]];\n    (* display[v]; *)\n    (* rank[v]; *)\n    v = transfer[v, Max[j - 1, 1]];\n    Print[\"After transfer ...\"];\n    (* display[v]; *)\n    (* rank[v]; *)\n    lhs = alpha[opQAI[v, f], S];\n    Print[\"LHS of proof obligation\"];\n    (* display[lhs]; *)\n    (* rank[lhs]; *)\n    rhs = opQAIR[alpha[v, S], j];\n    Print[\"RHS of proof obligation\"];\n    (* display[rhs]; *)\n    (* rank[rhs]; *)\n    Print[equals[lhs, rhs, S]];\n    If[\n        And @@ equals[lhs, rhs, S],\n        \n        Print[\"Proof obligation satisfied, nothing to be modified!\"];\n        PrependTo[alphaCache, \"\"];\n        PrependTo[gammaCache, \"\"],\n        \n        Print[\"Proof obligation not satisfied, modifying!\"];\n        PrependTo[alphaCache, v];\n        PrependTo[gammaCache, ToString[StringForm[\"u``\", j]]]\n    ],\n\n    {i, Length[func]}\n]\n\nPrint[\"Again\"]\nabsCache = {};\nv = spec;\nPrint[\"\\n\"]\nPrint[StringForm[\"v`` corresponds to spec which here corresponds to the strongest postcondition for f(c)\", Length[func] + 1]]\n(* display[v] *)\n(* rank[v] *)\n\nfAI = alpha[alpha[init, funcR[[1]]], S];\nAppendTo[absCache, fAI];\nDo[\n    fAI = opQAIR[fAI, i];\n    AppendTo[absCache, fAI],\n    \n    {i, Length[func] - 1}\n]\n\nDo[\n    j = Length[func] - i + 1;\n    f=func[[j]];\n    intDomain = funcR[[j]];\n    g = f;\n    g[[2]] = ConjugateTranspose[f[[2]]];\n    fWLP = op[v, g];\n    Print[StringForm[\"f`` weakest liberal precondition\", j]];\n    (* display[fWLP]; *)\n    (* rank[fWLP]; *)\n    fAI = gamma[absCache[[j]], j];\n    Print[StringForm[\"a`` corresponds to the abstract computation until start of f``\", j, j]];\n    (* display[fAI]; *)\n    (* rank[fAI]; *)\n    v = intersection[fAI, fWLP, intDomain];\n    Print[StringForm[\"v`` which needs to be added/already there for f`` is their intersection\", j, j]];\n    (* display[v]; *)\n    (* rank[v]; *)\n    v = transfer[v, Max[j - 1, 1]];\n    Print[\"After transfer ...\"];\n    (* display[v]; *)\n    (* rank[v]; *)\n    lhs = alpha[op[v, f], S];\n    Print[\"LHS of proof obligation\"];\n    (* display[lhs]; *)\n    (* rank[lhs]; *)\n    rhs = opQAIR[alpha[v, S], j];\n    Print[\"RHS of proof obligation\"];\n    (* display[rhs]; *)\n    (* rank[rhs]; *)\n    Print[equals[lhs, rhs, S]];\n    If[\n        And @@ equals[lhs, rhs, S],\n        \n        Print[\"Proof obligation satisfied, nothing to be modified!\"];\n        PrependTo[alphaCache, \"\"];\n        PrependTo[gammaCache, \"\"],\n        \n        Print[\"Proof obligation not satisfied, modifying!\"];\n        PrependTo[alphaCache, v];\n        PrependTo[gammaCache, ToString[StringForm[\"u``\", j]]]\n    ],\n\n    {i, Length[func]}\n]",
    "languageId": "wolfram",
    "outputs": [
     {
      "items": [
       {
-       "data": "<div class=\"wexpr\"><wgraph class=\"resizable\" style=\"width:19px;height:34px;\" aspect-ratio=\"1.7917\" tabIndex=\"-1\"><img class=\"invert-brightness\" src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAArCAIAAADt+9+sAAAA0npUWHRSYXcgcHJvZmlsZSB0eXBlIGV4aWYAAHjabU9trsMgDPvPKXaEkIADx6EtSLvBjr+ksD3xNEuNHeejJPTXc4SHgyOFlLWgAmRINVVuJgpNTI5U7ziTTy3ufuBj+c2s/FdAX/6x+4rJXP4tIp5C/A+mJa2BtUh4+rHN/Fj93ErZFo06bqwH00nfp//MkygjI2qymJhUUU2XYNIImSkrBk7AGiMupnQad6jaGNQ7pPmgg7vu3T1AzLj8BPEP0ow9RrGLLGbTXnNf+LKot/Zz3r5AXIlrg0yzAAAACXBIWXMAAB2HAAAdhwGP5fFlAAAAPHRFWHRTb2Z0d2FyZQBDcmVhdGVkIHdpdGggdGhlIFdvbGZyYW0gTGFuZ3VhZ2UgOiB3d3cud29sZnJhbS5jb21coqaFAAAAIXRFWHRDcmVhdGlvbiBUaW1lADIwMjY6MDY6MTAgMTU6MjA6MDMqvm6fAAACTklEQVRIS2P8/+8/AzUAEzUMAZkxahDhkBwNo9EwIhwChFWMpiM6hhEjWlF7//79e/fuiYmJqaurs7Gxobnk/fv3169f//v3r66uroCAAIos0CAIOnnipJmZGTMzs7S0NA8Pj4SERE93z98/fyGyDx88jIqKYmFhERcXFxERYWVlTUxMfPvmLVw7A4S1edNmDg6OgoKCVy9fAbl/fv/ZuGGjrKyst7f3zx8/T508JSoq6u/vf/PGTYj6s2fOWlpaqqmpvXj+AiICMujB/QdAJ/T39cONhzCePnkKNCszM1NBQSE5Ofnf33/ICn58/+Hk5OTg4IAwKCMjw9HREc0UCHfb1m3AgAAa9/3bd0wFQJs4OTl37dwFdZG8vPzCBQuxGgR0BTCwSkpKsMoCBYH+LSwsBDJAWeTVq1dAO7EmFUZGRqCUrAx2WaAWOTm5ly9fQus1oJ0PHz7EatD///8fAcHjR7hS5IMHD4DaQbJAV2VnZ9vZ2WF1/KaNm4BqgAni29dvmAoePXwEjOs9u/dAwwjI5+Xl7e7qRlMKTDuSkpJ5eXmKioqxsbHwNAVRBjTa1tbW2dkZEWuQ2AGGf1ZWFjAigNxfP3+tXrVaSkrKz88Pno48PT0vXbwE0Xb0yFETExNNTc2XL16iGARJYzY2NsDQBSZcdnZ2GRmZiRMmwtMO0HVARwETNDBnAJ0P9FFaWtr7d+/hnkDPa0+fPgVmN2BeU1ZWBmYXtDD+/PnzrVu3gHlNS0sLmIaRZdENIlxe4FAxWtQSDrrRMBqKYQQABXkJhNt+Ks4AAAAASUVORK5CYII=\" /></wgraph></div>",
-       "mime": "x-application/wolfram-language-html"
+       "data": "{{1.}, {0.}}",
+       "mime": "text/html"
       }
      ],
-     "id": "a7aafcae-e911-4b34-a656-226615013171"
+     "id": "1c857b31-52e6-4afa-995b-42321e0a6382"
     },
     {
      "items": [
       {
-       "data": "<div class=\"wexpr\"><wgraph class=\"resizable\" style=\"width:19px;height:34px;\" aspect-ratio=\"1.7917\" tabIndex=\"-1\"><img class=\"invert-brightness\" src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAArCAIAAADt+9+sAAAA0npUWHRSYXcgcHJvZmlsZSB0eXBlIGV4aWYAAHjabU9trsMgDPvPKXaEkIADx6EtSLvBjr+ksD3xNEuNHeejJPTXc4SHgyOFlLWgAmRINVVuJgpNTI5U7ziTTy3ufuBj+c2s/FdAX/6x+4rJXP4tIp5C/A+mJa2BtUh4+rHN/Fj93ErZFo06bqwH00nfp//MkygjI2qymJhUUU2XYNIImSkrBk7AGiMupnQad6jaGNQ7pPmgg7vu3T1AzLj8BPEP0ow9RrGLLGbTXnNf+LKot/Zz3r5AXIlrg0yzAAAACXBIWXMAAB2HAAAdhwGP5fFlAAAAPHRFWHRTb2Z0d2FyZQBDcmVhdGVkIHdpdGggdGhlIFdvbGZyYW0gTGFuZ3VhZ2UgOiB3d3cud29sZnJhbS5jb21coqaFAAAAIXRFWHRDcmVhdGlvbiBUaW1lADIwMjY6MDY6MTAgMTU6MjA6MDMqvm6fAAACTklEQVRIS2P8/+8/AzUAEzUMAZkxahDhkBwNo9EwIhwChFWMpiM6hhEjWlF7//79e/fuiYmJqaurs7Gxobnk/fv3169f//v3r66uroCAAIos0CAIOnnipJmZGTMzs7S0NA8Pj4SERE93z98/fyGyDx88jIqKYmFhERcXFxERYWVlTUxMfPvmLVw7A4S1edNmDg6OgoKCVy9fAbl/fv/ZuGGjrKyst7f3zx8/T508JSoq6u/vf/PGTYj6s2fOWlpaqqmpvXj+AiICMujB/QdAJ/T39cONhzCePnkKNCszM1NBQSE5Ofnf33/ICn58/+Hk5OTg4IAwKCMjw9HREc0UCHfb1m3AgAAa9/3bd0wFQJs4OTl37dwFdZG8vPzCBQuxGgR0BTCwSkpKsMoCBYH+LSwsBDJAWeTVq1dAO7EmFUZGRqCUrAx2WaAWOTm5ly9fQus1oJ0PHz7EatD///8fAcHjR7hS5IMHD4DaQbJAV2VnZ9vZ2WF1/KaNm4BqgAni29dvmAoePXwEjOs9u/dAwwjI5+Xl7e7qRlMKTDuSkpJ5eXmKioqxsbHwNAVRBjTa1tbW2dkZEWuQ2AGGf1ZWFjAigNxfP3+tXrVaSkrKz88Pno48PT0vXbwE0Xb0yFETExNNTc2XL16iGARJYzY2NsDQBSZcdnZ2GRmZiRMmwtMO0HVARwETNDBnAJ0P9FFaWtr7d+/hnkDPa0+fPgVmN2BeU1ZWBmYXtDD+/PnzrVu3gHlNS0sLmIaRZdENIlxe4FAxWtQSDrrRMBqKYQQABXkJhNt+Ks4AAAAASUVORK5CYII=\" /></wgraph></div>",
+       "data": "{{0.}, {1.}}",
+       "mime": "text/html"
+      }
+     ],
+     "id": "0ec2dc54-4c47-4ac6-9005-1ad54a581c9b"
+    },
+    {
+     "items": [
+      {
+       "data": "{{1., 0., 0., 0.}, {0., 0., 1., 0.}, {0., 1., 0., 0.}, {0., 0., 0., 1.}}",
+       "mime": "text/html"
+      }
+     ],
+     "id": "42164feb-8e30-4419-a17c-9df0d0440ba1"
+    },
+    {
+     "items": [
+      {
+       "data": "{{0.707107, 0.707107}, {0.707107, -0.707107}}",
+       "mime": "text/html"
+      }
+     ],
+     "id": "73aa54b4-e895-434a-a57b-2c643d9df98a"
+    },
+    {
+     "items": [
+      {
+       "data": "{{1., 0.}, {0., -1.}}",
+       "mime": "text/html"
+      }
+     ],
+     "id": "05a2dc1b-30f0-411f-aab3-c9a79ac6bbf5"
+    },
+    {
+     "items": [
+      {
+       "data": "<div class=\"wexpr\"><wgraph class=\"resizable\" style=\"width:590px;height:34px;\" aspect-ratio=\"0.0583\" tabIndex=\"-1\"><img class=\"invert-brightness\" src=\"data:image/png;base64,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\" /></wgraph></div>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "0818c995-5486-47de-92c9-79efc62b6dfc"
+     "id": "936e21eb-5ef2-4419-8920-5d642342f092"
+    },
+    {
+     "items": [
+      {
+       "data": "<div class=\"wexpr\"><wgraph class=\"resizable\" style=\"width:590px;height:34px;\" aspect-ratio=\"0.0583\" tabIndex=\"-1\"><img class=\"invert-brightness\" src=\"data:image/png;base64,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\" /></wgraph></div>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "b66e25df-57f1-45a2-b515-974d552946cc"
+    },
+    {
+     "items": [
+      {
+       "data": "<div class=\"wexpr\"><wgraph class=\"resizable\" style=\"width:394px;height:34px;\" aspect-ratio=\"0.0872\" tabIndex=\"-1\"><img class=\"invert-brightness\" src=\"data:image/png;base64,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\" /></wgraph></div>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "1f328625-da41-405e-9acf-9381c8eac632"
+    },
+    {
+     "items": [
+      {
+       "data": "{{1., 0., 0., 0.}, {0., 1., 0., 0.}, {0., 0., 0., 1.}, {0., 0., 1., 0.}}",
+       "mime": "text/html"
+      }
+     ],
+     "id": "f59858fc-d30e-4c6d-8d1a-e892ec4e61c1"
+    },
+    {
+     "items": [
+      {
+       "data": "{{1., 0., 0., 0.}, {0., 1., 0., 0.}, {0., 0., 1., 0.}, {0., 0., 0., -1.}}",
+       "mime": "text/html"
+      }
+     ],
+     "id": "be4ced11-c81c-4ba9-bcd1-066d0bb3076e"
     },
     {
      "items": [
@@ -30,7 +102,16 @@
        "mime": "text/html"
       }
      ],
-     "id": "59dbf3e2-665e-44b3-84fd-b418ff6266a2"
+     "id": "2785830f-4d42-4804-b565-0c89e9484266"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>==================================================================\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "8abd2358-1cb1-49f2-b6fc-1e273f6c24a8"
     },
     {
      "items": [
@@ -39,1078 +120,1087 @@
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "3ccbe567-f7f2-4d17-b853-92f6262fa514"
+     "id": "841d2c7f-c99e-413f-bcc8-d03528986d51"
     },
     {
      "items": [
       {
-       "data": "<pre>Forward Repair Strategy\n</pre>",
+       "data": "<pre>Backward Repair Strategy\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "d3650fa3-fddb-469d-b7c3-31d50bb32253"
+     "id": "2816cf9f-0a96-43c9-b220-add24cbbcfe7"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>1\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "3a07982c-c2b9-446d-a510-c8c43647fca6"
+     "id": "458283c6-8e07-451b-a7a1-d073f19feb12"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>2\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "2e60197e-134d-40e9-8753-06553b774cf9"
+     "id": "aa888861-9a0e-4959-945c-5e55286d9d71"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>3\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "58d20f34-7148-4dd3-84c8-fb2120922dca"
+     "id": "33bb1c82-565c-4b42-a056-4bb4e4cbcc52"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>4\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "1bf2ec7a-2435-4d0f-b423-bfba420cffbc"
+     "id": "439e3d53-56c8-4f7c-ace0-f8f1b3ecc34d"
     },
     {
      "items": [
       {
-       "data": "<pre>f1\n</pre>",
+       "data": "<pre>5\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "b9b0fbb6-d01a-418a-9622-97237dbd5138"
+     "id": "7a40cc97-d23b-40d6-ad70-54e2d6d68a67"
     },
     {
      "items": [
       {
-       "data": "<pre>Check f1\n</pre>",
+       "data": "<pre>6\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "610b5082-cd83-4b86-99f8-b98a47f1cd22"
+     "id": "ed770cbe-c065-4fe9-be46-ee9dd73c51f8"
     },
     {
      "items": [
       {
-       "data": "<pre>tCheck f1\n</pre>",
+       "data": "<pre>7\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "ae94e948-96e8-4848-9e4b-8909d1be6b1b"
+     "id": "e1e75939-d486-48c3-ad55-60f156b1592b"
     },
     {
      "items": [
       {
-       "data": "<pre>dCheck f1\n</pre>",
+       "data": "<pre>8\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "b54e2b81-a2df-4e75-b3f3-751751548c89"
+     "id": "7cbb74c9-c4c5-41c1-a4de-adc65dd55b1d"
     },
     {
      "items": [
       {
-       "data": "<pre>opCheck f1\n</pre>",
+       "data": "<pre>9\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "9bc7ac2b-b278-46bd-9323-5a3756ea07a8"
+     "id": "16b6ffde-d399-4c89-8b2a-911d77447feb"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>10\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "dd62d01f-b0a6-4fe8-b046-0252643c9e3f"
+     "id": "d2409a90-e6c8-441f-8f38-258bde570221"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>11\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "4b97cfcc-4151-405e-83e2-5aed8a1b117a"
+     "id": "86e552f6-1e5e-4756-8645-1d539c6df29d"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>12\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "c8622e03-36b3-495b-8e02-77b1f7a1476f"
+     "id": "bfa1c10f-6409-4aa3-9afe-8ea2047b9ae4"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>13\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "8e60e2d8-c6c0-4740-aec5-6eda8131be33"
+     "id": "b5867e1c-baba-49e1-bb81-1267dae4d492"
     },
     {
      "items": [
       {
-       "data": "<pre>f1 strongest postcondition\n</pre>",
+       "data": "<pre>14\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "7f72f850-2993-49b0-b805-3471258d1384"
+     "id": "9c6b86cd-4ecc-45d8-a6a6-789344aaa424"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>15\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "ba771957-2d93-429d-94b0-7aa8723e60dd"
+     "id": "55e9a7fb-8c8e-4a01-ace1-bb57829079a5"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>16\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "723996f9-c947-48fd-9f13-909e6c36e947"
+     "id": "bd7b9637-afb1-4553-b310-5a5a6c4265f0"
     },
     {
      "items": [
       {
-       "data": "<pre>f1 computed by the abstract interpreter\n</pre>",
+       "data": "<pre>17\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "2f6e6f9d-5c99-4692-8ded-8a7a2642069a"
+     "id": "f283c175-0e50-46d5-a279-ecc965e19d89"
     },
     {
      "items": [
       {
-       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "data": "<pre>18\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "be761b77-af30-4592-bcd1-a8e321d3e183"
+     "id": "699b38aa-8372-4123-ae68-2f6c99913be8"
     },
     {
      "items": [
       {
-       "data": "<pre>f1 is complete and moving to the next one!\n</pre>",
+       "data": "<pre>19\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "f255c65d-dd13-4c69-a06f-1e179a1c66f4"
+     "id": "604cee68-508c-4004-825c-92a08e42906f"
     },
     {
      "items": [
       {
-       "data": "<pre>f2\n</pre>",
+       "data": "<pre>20\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "5f33feb3-5072-44ca-8cba-50fb612d40a3"
+     "id": "98d700b5-caf8-4896-a9fd-069e8c72d49d"
     },
     {
      "items": [
       {
-       "data": "<pre>Check f2\n</pre>",
+       "data": "<pre>21\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "61d422dd-7afb-46e6-b075-dade1d8133ab"
+     "id": "b18655e4-90e6-4adc-b1c0-c6ffe1f8d657"
     },
     {
      "items": [
       {
-       "data": "<pre>tCheck f2\n</pre>",
+       "data": "<pre>22\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "50f10096-640b-4dad-81a8-5962e50179d8"
+     "id": "b724704d-8ec2-4969-adcf-e4e731b67705"
     },
     {
      "items": [
       {
-       "data": "<pre>dCheck f2\n</pre>",
+       "data": "<pre>23\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "40ff33c9-2dd4-4a64-bfd1-39a0b9be1249"
+     "id": "ab634e40-3a40-4884-b707-7b25d432edc0"
     },
     {
      "items": [
       {
-       "data": "<pre>opCheck f2\n</pre>",
+       "data": "<pre>24\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "007c8e54-b1b2-419e-9263-956d84b7af14"
+     "id": "06020121-4bbf-4aa8-b71f-269897dde564"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>25\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "2600be1e-ba12-42c4-944a-3b9b688fe58d"
+     "id": "0c12a15b-fc7c-4323-8751-b0ff556f7418"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>26\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "32941a61-e514-497b-8d2c-b2d526ae1b5c"
+     "id": "d29e4292-ba31-4155-8938-aa581ff377f2"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>27\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "9e7848e7-1613-47c3-8470-1037ff0f6b76"
+     "id": "ffb8890e-44ed-48fc-8aa7-3507a76e4c4b"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>28\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "21eb9d1f-a4a4-4574-9717-6ead39d91c0e"
+     "id": "f5abdf60-d9b8-4657-bf93-cc72592b8f47"
     },
     {
      "items": [
       {
-       "data": "<pre>f2 strongest postcondition\n</pre>",
+       "data": "<pre>29\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "a6c91e9c-832d-4261-b2bc-7fab1278f737"
+     "id": "bc55c63f-0a1f-45c1-8163-0f0e55710cbb"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>30\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "2bcdb4c5-27d0-4a58-ba7a-3d45b6559394"
+     "id": "5fb1279a-1b30-4360-b03f-298f7ce882a7"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>31\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "59768e8d-d1d0-47c6-bd39-6b48d0f61b97"
+     "id": "608dd7d5-ce91-4cab-8391-eab3aa24c748"
     },
     {
      "items": [
       {
-       "data": "<pre>f2 computed by the abstract interpreter\n</pre>",
+       "data": "<pre>32\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "b90fbc44-bfb0-43a3-90fc-99c4d098fc47"
+     "id": "a0823640-f3e4-48fd-9ab8-613c5ab28895"
     },
     {
      "items": [
       {
-       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "data": "<pre>33\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "56845443-d28e-4196-87f7-b32f203127b5"
+     "id": "e1811482-02e0-486b-8255-fd73a549d30b"
     },
     {
      "items": [
       {
-       "data": "<pre>f2 is complete and moving to the next one!\n</pre>",
+       "data": "<pre>34\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "8e3bebb5-8d50-4f02-9104-4958a9bc70d1"
+     "id": "9d88fa91-df61-480b-8a7b-2dff8a028b45"
     },
     {
      "items": [
       {
-       "data": "<pre>f3\n</pre>",
+       "data": "<pre>35\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "44a80d8a-efb0-40ff-9d85-f45e1dc2a36a"
+     "id": "51b1fa35-ca10-4aa8-8283-e0f3618ff853"
     },
     {
      "items": [
       {
-       "data": "<pre>Check f3\n</pre>",
+       "data": "<pre>36\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "f7d74bf8-b88a-4a31-99a5-e06fab2155f4"
+     "id": "629f1b5c-e264-4b93-9bac-571524d2e60a"
     },
     {
      "items": [
       {
-       "data": "<pre>tCheck f3\n</pre>",
+       "data": "<pre>37\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "8f8cedbb-2c71-471e-8a57-81ba20b7f214"
+     "id": "3e580c28-3a45-43d8-8c10-6f491eb1cfb5"
     },
     {
      "items": [
       {
-       "data": "<pre>dCheck f3\n</pre>",
+       "data": "<pre>38\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "10988a17-4d92-4464-97a5-bceab6972990"
+     "id": "267918c1-06fb-4873-ab46-570d51d4981c"
     },
     {
      "items": [
       {
-       "data": "<pre>opCheck f3\n</pre>",
+       "data": "<pre>39\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "9bae5f65-c1e0-464b-ad73-d3c1da131f02"
+     "id": "058a9e19-576b-4aea-84e1-7a79147aa349"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>40\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "f4e6b099-e304-4427-8850-e2d8386112bb"
+     "id": "7087d02e-ed57-4c23-8657-81743d64d7d8"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>41\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "3588d2ca-7832-4e7f-b589-56e4fc3ddb2b"
+     "id": "5638f79d-6414-4544-ad95-4ba9ca71755c"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>42\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "cf3ab011-188a-40c6-9936-e1b50851228e"
+     "id": "944bb8e1-8f03-4c6d-9edf-66c9d98b15c0"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>43\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "1fbcdeb2-d931-4749-ad3a-8c9dd48cffd2"
+     "id": "610fb943-81a1-4042-ae9a-53191929d19a"
     },
     {
      "items": [
       {
-       "data": "<pre>f3 strongest postcondition\n</pre>",
+       "data": "<pre>44\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "ec18b40a-dd5a-47ca-b510-e293bf80e99d"
+     "id": "34f02113-9f29-4c48-8f10-84f576b1536d"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>45\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "bf281c44-4f7a-4424-8a14-b2e00509b12c"
+     "id": "ea37099d-931b-47e5-8c26-b739049bf758"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>46\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "8b8673cf-03bf-4a9a-a0f5-2f1bb48ee430"
+     "id": "ddef60d7-4157-4ed8-9a4a-020575450169"
     },
     {
      "items": [
       {
-       "data": "<pre>f3 computed by the abstract interpreter\n</pre>",
+       "data": "<pre>47\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "885ca212-bbed-40fb-b7ae-fda7c0fe5762"
+     "id": "06b21b9b-ef54-4e9e-be76-9d8c1117d20c"
     },
     {
      "items": [
       {
-       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "data": "<pre>48\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "2b80b158-6493-493d-88f9-b0442e950ea4"
+     "id": "6ebc194b-5e96-4fb9-ab2b-01b58adaa018"
     },
     {
      "items": [
       {
-       "data": "<pre>f3 is complete and moving to the next one!\n</pre>",
+       "data": "<pre>49\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "b0fba825-0150-4db5-b68e-0fe8dedde28f"
+     "id": "9c6edf9d-5c7e-4015-bc5c-a22643b1fbe9"
     },
     {
      "items": [
       {
-       "data": "<pre>f4\n</pre>",
+       "data": "<pre>50\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "105ad1bf-4e38-4423-a196-e52ddde327cc"
+     "id": "11c74fec-09eb-4168-a772-5e1cd328fd3e"
     },
     {
      "items": [
       {
-       "data": "<pre>Check f4\n</pre>",
+       "data": "<pre>51\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "b70c67d8-5805-4376-9bf5-c068285fcea2"
+     "id": "53ccd3b8-32d9-4dfd-a8c9-dfd8188df854"
     },
     {
      "items": [
       {
-       "data": "<pre>tCheck f4\n</pre>",
+       "data": "<pre>52\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "57970866-7b7f-4c96-9a65-5540a2c1148d"
+     "id": "9aa6cb80-45a4-43f5-8474-c03820edb507"
     },
     {
      "items": [
       {
-       "data": "<pre>dCheck f4\n</pre>",
+       "data": "<pre>53\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "027b371d-8d1b-400a-b988-553434cf4660"
+     "id": "1c8b02c8-0813-4ec1-93bb-fce600407bf7"
     },
     {
      "items": [
       {
-       "data": "<pre>opCheck f4\n</pre>",
+       "data": "<pre>54\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "9923b468-454c-48e0-a4c1-969fb23affd0"
+     "id": "d0f7f7a1-41d2-42b1-b90b-ec5444bc8c91"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>55\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "02bf6b70-5bd6-4ecc-9ee3-8bbaa1c8208e"
+     "id": "20d170c9-2770-49a5-a1ff-5a25cbb92bcd"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>56\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "a9088154-75ec-4d79-a8c1-ad9a5c80c6da"
+     "id": "beb6de49-9ade-4c36-b57e-640236250d06"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>57\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "9194468d-1a81-405f-b66c-ec50f3131e7b"
+     "id": "a0729a15-fe9a-4578-8266-55bfd5f4b738"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>58\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "a2592795-6881-4f6f-8329-7a219f03f6d9"
+     "id": "b475ed08-d3be-40e3-8807-c559c04fcbcf"
     },
     {
      "items": [
       {
-       "data": "<pre>f4 strongest postcondition\n</pre>",
+       "data": "<pre>59\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "8de6f43e-ea5a-408e-8f38-5fe8a792ed94"
+     "id": "078b0f91-3d2b-4f7b-b692-ac322c7342a9"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>60\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "69b08261-6f30-42c7-ab79-6566373336f3"
+     "id": "0084c16b-fbdd-496d-b9f8-cced4410e64a"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>61\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "89659c44-6c8a-4815-84d6-190dd561617d"
+     "id": "b05cd719-f208-4393-a04f-a5dd0b57cfb9"
     },
     {
      "items": [
       {
-       "data": "<pre>f4 computed by the abstract interpreter\n</pre>",
+       "data": "<pre>62\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "8ed3b600-a9bb-4409-9043-ed96e3dc396d"
+     "id": "b8b9c5df-6982-43db-89b1-e9835da7a0db"
     },
     {
      "items": [
       {
-       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "data": "<pre>63\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "2c8f31a6-c890-4cd8-97ee-dcee37c2b01f"
+     "id": "41fcb862-d7b7-4411-85e7-34a66f59a6a1"
     },
     {
      "items": [
       {
-       "data": "<pre>f4 is complete and moving to the next one!\n</pre>",
+       "data": "<pre>64\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "b4d9f753-ea89-4860-85d3-dce274900108"
+     "id": "301763ac-a479-4578-99ad-33ff0e1d1903"
     },
     {
      "items": [
       {
-       "data": "<pre>f5\n</pre>",
+       "data": "<pre>65\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "dfc85e98-1637-4069-92e4-f39638accaea"
+     "id": "38905721-fc26-4acb-8752-a77a0b82ae79"
     },
     {
      "items": [
       {
-       "data": "<pre>Check f5\n</pre>",
+       "data": "<pre>66\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "9e814b3f-6cd7-425c-8f0f-8351c495b6e7"
+     "id": "8c4b57de-8f9d-4a50-8486-eb65def0a265"
     },
     {
      "items": [
       {
-       "data": "<pre>tCheck f5\n</pre>",
+       "data": "<pre>67\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "f824b3a0-9867-4b79-acc4-f10c9ac3412a"
+     "id": "61b2ca44-6528-49ed-a3e3-e2de19112546"
     },
     {
      "items": [
       {
-       "data": "<pre>dCheck f5\n</pre>",
+       "data": "<pre>68\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "40c7bb61-d57e-48ae-bdac-b5e65f5f9cf9"
+     "id": "1654d798-464a-40fb-a4c9-8d95b2ab2828"
     },
     {
      "items": [
       {
-       "data": "<pre>opCheck f5\n</pre>",
+       "data": "<pre>69\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "a8534654-dd3f-4bd1-bcda-b5f6e159165f"
+     "id": "bdeb1044-5334-450f-a9d1-e1388a44c6d5"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>70\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "b5bfb136-631f-4103-b4be-d4dd2e2a50ce"
+     "id": "586e830c-5338-40d2-ab9d-cb0188fab2da"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>71\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "1088cc66-97c5-4d3a-ada6-f25e53675b33"
+     "id": "1f666b35-dcef-4952-a5d6-3bb07e3a8500"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>72\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "02a0b7b6-010b-41c1-becd-548fc367d326"
+     "id": "fce3c9f1-60eb-40d9-bcc5-0f9d87d48520"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>73\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "e5585835-3950-402b-94f1-5f767b0e6487"
+     "id": "d5971119-884c-4250-81eb-7e67c4583564"
     },
     {
      "items": [
       {
-       "data": "<pre>f5 strongest postcondition\n</pre>",
+       "data": "<pre>74\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "5d92a983-a911-4cb4-975a-59deecaba0a2"
+     "id": "62a2f714-412e-40f4-b138-aa3b31e989a8"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>75\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "7b6ed428-2e2b-474c-b55a-84f02fab95b0"
+     "id": "c5ec21ee-8aff-4399-b937-819db159df03"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>76\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "4e5041b5-31b8-4f29-965e-d669e4709134"
+     "id": "c061a476-9826-4dd7-8d49-0f87ecd36d69"
     },
     {
      "items": [
       {
-       "data": "<pre>f5 computed by the abstract interpreter\n</pre>",
+       "data": "<pre>77\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "28952dcf-2bac-40ea-b571-5ef92e18b4e6"
+     "id": "89a2dde0-33fe-4284-abce-ebd565402462"
     },
     {
      "items": [
       {
-       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "data": "<pre>78\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "d16517ef-8c31-4a9c-b215-5ad02d0d064c"
+     "id": "7392ed57-b707-4327-8898-6288fbe76e8a"
     },
     {
      "items": [
       {
-       "data": "<pre>f5 is complete and moving to the next one!\n</pre>",
+       "data": "<pre>79\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "1e118445-46a2-41e6-a200-d33884ecb7d9"
+     "id": "d9068827-7d70-4c45-9769-21b72232695a"
     },
     {
      "items": [
       {
-       "data": "<pre>f6\n</pre>",
+       "data": "<pre>80\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "0d19bff8-3495-47ba-b978-ffd417cfb392"
+     "id": "2b549e77-af46-4aeb-a567-264bfd898066"
     },
     {
      "items": [
       {
-       "data": "<pre>Check f6\n</pre>",
+       "data": "<pre>81\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "72fcb697-3f4e-4d2c-8128-f898f651b758"
+     "id": "ec5251c8-d48d-4651-8d69-31f51aecd3e1"
     },
     {
      "items": [
       {
-       "data": "<pre>tCheck f6\n</pre>",
+       "data": "<pre>82\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "fc49c131-dd15-4166-9a78-e62c0349ce5d"
+     "id": "3e64c790-696f-4332-9fbe-cdb1ce458db6"
     },
     {
      "items": [
       {
-       "data": "<pre>dCheck f6\n</pre>",
+       "data": "<pre>83\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "feac1078-cdc5-4f54-acd0-d4acbbdfe940"
+     "id": "466e91d1-82e5-4bc0-a4b7-c11396f402fa"
     },
     {
      "items": [
       {
-       "data": "<pre>opCheck f6\n</pre>",
+       "data": "<pre>84\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "99814a9b-6664-4805-bc13-41cf5df648f2"
+     "id": "e88038e7-8ab1-478e-ac37-cc6476ac4f2b"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>85\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "53584df8-a5f5-42dc-9cee-e26d594c4fea"
+     "id": "f1a65465-46ad-43c4-a718-773b45aa9871"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>86\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "bcf534b6-56f7-4b4a-a0ee-8568049a2939"
+     "id": "3a1bfbbd-b06a-4478-ba2e-8a6f08d3be4e"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>87\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "61f58823-44a2-42ae-9752-73e3f94480b7"
+     "id": "757c81a5-8ea1-4ba0-8907-3a9c30175bef"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>88\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "8ac5b484-8cf3-4d2f-9b84-6ff12cc13eae"
+     "id": "aa3e279f-2c08-4de1-90a0-85a459ebcae1"
     },
     {
      "items": [
       {
-       "data": "<pre>f6 strongest postcondition\n</pre>",
+       "data": "<pre>89\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "58a14b66-a3b8-4cc6-811c-6577d08a5918"
+     "id": "dcf2fcd0-d5e3-4a88-bd75-33dbc739b86b"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>90\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "1def391f-5cd9-4403-83c4-dad410af0033"
+     "id": "88813cc7-ffeb-4af5-9729-4721b5c34149"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>91\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "6e0fa360-0485-4716-b2d2-3f82f4b3a242"
+     "id": "ab96b796-76a1-4755-ae88-604726517210"
     },
     {
      "items": [
       {
-       "data": "<pre>f6 computed by the abstract interpreter\n</pre>",
+       "data": "<pre>92\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "8da00709-4374-452a-ad4b-1b3b9f799f6a"
+     "id": "dd05edd6-f5da-49c4-a7d6-23afd7ccf344"
     },
     {
      "items": [
       {
-       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "data": "<pre>93\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "606a3f83-5b47-40d0-acdc-5ef8e37a35a5"
+     "id": "346f974f-1b4e-4a5f-85c8-00ce1df86daa"
     },
     {
      "items": [
       {
-       "data": "<pre>f6 is complete and moving to the next one!\n</pre>",
+       "data": "<pre>94\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "c8b29ff3-0ae5-4b9a-927d-e0850dfbd9bc"
+     "id": "3aad6c4a-a271-43d2-97b9-ed2894bfd867"
     },
     {
      "items": [
       {
-       "data": "<pre>f7\n</pre>",
+       "data": "<pre>95\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "f8e393d2-66a5-4d79-8f20-ce5f34c35a1a"
+     "id": "ccfde3ef-6788-4e2a-a0db-3e1a9d69498c"
     },
     {
      "items": [
       {
-       "data": "<pre>Check f7\n</pre>",
+       "data": "<pre>96\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "3628afc1-5a45-4b56-8cbf-6052ce3fe15a"
+     "id": "08990081-7a57-44d9-b9dd-e16caaa5513e"
     },
     {
      "items": [
       {
-       "data": "<pre>tCheck f7\n</pre>",
+       "data": "<pre>97\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "1fefa39d-335c-4fda-a606-ae84a55d833c"
+     "id": "7cd67d84-afd0-4e61-a51c-5c747a3065b6"
     },
     {
      "items": [
       {
-       "data": "<pre>dCheck f7\n</pre>",
+       "data": "<pre>98\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "17125e7f-adff-4094-bbb0-9b51d84ca212"
+     "id": "46f99ddc-546b-4c4f-8d79-d52b05af4596"
     },
     {
      "items": [
       {
-       "data": "<pre>opCheck f7\n</pre>",
+       "data": "<pre>99\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "a8cff682-d6a1-4389-a0bf-5349af81898e"
+     "id": "7ff8b41d-9744-4c83-aef2-0d4800c8774f"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>100\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "c31304fe-fd6d-41ed-b88f-71b9c2c1d21b"
+     "id": "ebf13aa4-4bab-44f3-96d4-937e76a4cd3d"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>101\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "a3055a26-5583-42c6-8478-cc5f9d38dc6a"
+     "id": "76d0c5df-6778-42e8-891d-b86395a186a2"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>102\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "7e346703-a4be-4067-8aa5-4ce9af205852"
+     "id": "667590da-9c4b-4b43-aaf8-96de2f5bc79b"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>103\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "688a32e5-d2e5-488d-856c-78b40b201ec2"
+     "id": "6150e3f8-30c1-43bf-9665-c6d22c35b43c"
     },
     {
      "items": [
       {
-       "data": "<pre>f7 strongest postcondition\n</pre>",
+       "data": "<pre>104\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "e769b5e5-9a3c-4a84-85f3-e4bea9729d3c"
+     "id": "4aa475f7-f0c7-40af-bcf9-e9301f382202"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre><span class=\"wl-message\">Orthogonalize::ornhsl</span>: The Householder method called by the option Method -> Householder cannot orthogonalize this set of vectors. Try another orthogonalization method.</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "7885aa0a-4217-47c4-a5d1-ebab0aedbcf9"
+     "id": "b44e90fa-da3d-41ba-ba22-7913c2d96c7c"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre><span class=\"wl-message\">Orthogonalize::ornhsl</span>: The Householder method called by the option Method -> Householder cannot orthogonalize this set of vectors. Try another orthogonalization method.</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "a329f203-5a5a-4df1-aba2-bb49375ded16"
+     "id": "b0241a1c-3414-4f04-b2ae-1d95d3052770"
     },
     {
      "items": [
       {
-       "data": "<pre>f7 computed by the abstract interpreter\n</pre>",
+       "data": "<pre><span class=\"wl-message\">Orthogonalize::ornhsl</span>: The Householder method called by the option Method -> Householder cannot orthogonalize this set of vectors. Try another orthogonalization method.</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "d3aa8daa-1e37-48f6-943d-9d1a408f891d"
+     "id": "f75fce7e-a246-4c7b-9890-19b38b0aac09"
     },
     {
      "items": [
       {
-       "data": "<pre>{True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True, True, True, True, True, True, True, True, True, \n \n>   True, True, True, True}\n</pre>",
+       "data": "<pre><span class=\"wl-message\">General::stop</span>: Further output of Orthogonalize::ornhsl will be suppressed during this calculation.</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "91754826-5035-4280-ae56-797d39e5acb1"
+     "id": "2992157f-b525-4e12-b620-bca108380ab1"
     },
     {
      "items": [
       {
-       "data": "<pre>f7 is complete and moving to the next one!\n</pre>",
+       "data": "<pre><span class=\"wl-message\">Orthogonalize::ornhsl</span>: The Householder method called by the option Method -> Householder cannot orthogonalize this set of vectors. Try another orthogonalization method.</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "f64e0232-60f8-486d-a845-802c0d6941b5"
+     "id": "70c7d420-4421-45b0-8653-9bd67bd12e66"
     },
     {
      "items": [
       {
-       "data": "<pre>f8\n</pre>",
+       "data": "<pre><span class=\"wl-message\">Orthogonalize::ornhsl</span>: The Householder method called by the option Method -> Householder cannot orthogonalize this set of vectors. Try another orthogonalization method.</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "0aa3b5c0-d842-49fa-9c6c-0148e21849b0"
+     "id": "1d8cd349-001c-4eec-828b-5a0c5f4f2bbd"
     },
     {
      "items": [
       {
-       "data": "<pre>Check f8\n</pre>",
+       "data": "<pre><span class=\"wl-message\">Orthogonalize::ornhsl</span>: The Householder method called by the option Method -> Householder cannot orthogonalize this set of vectors. Try another orthogonalization method.</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "eab0dcea-e2d6-4e05-84f2-e4b1266ae598"
+     "id": "8826238a-f0e7-4e3a-a022-7feeef2a9894"
     },
     {
      "items": [
       {
-       "data": "<pre>tCheck f8\n</pre>",
+       "data": "<pre>\n\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "13149b60-94e2-42a6-a196-1ee66b683ddc"
+     "id": "482ea966-e634-4c30-a90c-7d127b790542"
     },
     {
      "items": [
       {
-       "data": "<pre>dCheck f8\n</pre>",
+       "data": "<pre>v106 corresponds to spec which here corresponds to the strongest\\\n \n>    postcondition for f(c)\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "2adb30d7-413d-4403-9b6c-548ca63b002f"
+     "id": "96c8c33f-b53c-4599-bf00-3927ce40fd0b"
     },
     {
      "items": [
       {
-       "data": "<pre>opCheck f8\n</pre>",
+       "data": "<pre>1\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "5a68742d-9f72-4071-a46d-6103d2a342cd"
+     "id": "63da73db-79f1-425a-93ed-0238a0879757"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>2\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "e7caae39-ada9-4bb1-91f5-28ffbbce83a5"
+     "id": "c52ca12e-c99e-4b2e-a9be-1a48312cce02"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>3\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "871969dd-b8a1-4a3e-ae3b-0abc1335af77"
+     "id": "58b6c16c-a2da-429f-bc86-41151140d8e3"
     },
     {
      "items": [
       {
-       "data": "<pre>Enter alpha\n</pre>",
+       "data": "<pre>4\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "7ab07f69-3e07-4d92-a0d1-153fdb2f9023"
+     "id": "7e27da6e-7113-4f68-b9ac-aff6ac894632"
     },
     {
      "items": [
       {
-       "data": "<pre>Tuples for alpha\n</pre>",
+       "data": "<pre>5\n</pre>",
        "mime": "x-application/wolfram-language-html"
       }
      ],
-     "id": "c67f0949-6123-4f70-b6a6-f41b0c211c27"
+     "id": "6b45bc37-6353-40fc-b3a9-7b8b11dd6223"
+    },
+    {
+     "items": [
+      {
+       "data": "<pre>6\n</pre>",
+       "mime": "x-application/wolfram-language-html"
+      }
+     ],
+     "id": "92e6d8e8-2c9a-47ed-a9a0-214f9f4eed18"
     }
    ],
    "metadata": {},
